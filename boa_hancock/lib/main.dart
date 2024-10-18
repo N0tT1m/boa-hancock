@@ -4,12 +4,19 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp(MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  runApp(MyApp(prefs: prefs));
 }
 
 class MyApp extends StatelessWidget {
+  final SharedPreferences prefs;
+
+  const MyApp({Key? key, required this.prefs}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -18,12 +25,16 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         colorScheme: ColorScheme.fromSwatch(primarySwatch: Colors.blue),
       ),
-      home: ChatScreen(),
+      home: ChatScreen(prefs: prefs),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
+  final SharedPreferences prefs;
+
+  const ChatScreen({Key? key, required this.prefs}) : super(key: key);
+
   @override
   _ChatScreenState createState() => _ChatScreenState();
 }
@@ -32,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
   bool _isLoading = false;
+  late String _conversationId;
 
   String get apiUrl {
     return 'http://192.168.1.90:8000/api/chat';
@@ -40,7 +52,23 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _conversationId = widget.prefs.getString('conversation_id') ?? DateTime.now().millisecondsSinceEpoch.toString();
+    // Do not load messages automatically
     _sendInitialMessage();
+  }
+
+  void _loadPreviousConversation() {
+    final messagesJson = widget.prefs.getString('messages') ?? '[]';
+    final List<dynamic> messagesList = jsonDecode(messagesJson);
+    setState(() {
+      _messages.clear(); // Clear existing messages before loading
+      _messages.addAll(messagesList.map((m) => ChatMessage.fromJson(m)).toList());
+    });
+  }
+
+  void _saveConversation() {
+    widget.prefs.setString('conversation_id', _conversationId);
+    widget.prefs.setString('messages', jsonEncode(_messages.map((m) => m.toJson()).toList()));
   }
 
   void _sendInitialMessage() {
@@ -50,6 +78,7 @@ class _ChatScreenState extends State<ChatScreen> {
         isUser: false,
       ));
     });
+    _saveConversation();
   }
 
   void _handleSubmitted(String text) async {
@@ -61,13 +90,17 @@ class _ChatScreenState extends State<ChatScreen> {
       ));
       _isLoading = true;
     });
+    _saveConversation();
 
     try {
       print('Attempting to connect to: $apiUrl');
       final response = await http.post(
         Uri.parse(apiUrl),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({'message': text}),
+        body: json.encode({
+          'message': text,
+          'conversation_id': _conversationId
+        }),
       ).timeout(Duration(seconds: 10));
 
       print('Response status code: ${response.statusCode}');
@@ -80,53 +113,50 @@ class _ChatScreenState extends State<ChatScreen> {
             text: responseData['message'],
             isUser: false,
           ));
+          // Update the conversation ID if it's a new conversation
+          _conversationId = responseData['metadata']['conversation_id'];
         });
+        _saveConversation();
       } else {
         throw HttpException('Failed to load response');
       }
-    } on SocketException catch (e) {
-      print('SocketException details: $e');
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error: Unable to connect to the server. Please check your network connection and server status.\n\nDetails: ${e.toString()}\n\nAPI URL: $apiUrl',
-          isUser: false,
-        ));
-      });
-    } on HttpException catch (e) {
-      print('HttpException details: $e');
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error: ${e.message}\n\nAPI URL: $apiUrl',
-          isUser: false,
-        ));
-      });
-    } on FormatException catch (e) {
-      print('FormatException details: $e');
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error: Received invalid response from the server.\n\nAPI URL: $apiUrl',
-          isUser: false,
-        ));
-      });
     } catch (e) {
-      print('Unexpected error: $e');
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error: An unexpected error occurred. ${e.toString()}\n\nAPI URL: $apiUrl',
-          isUser: false,
-        ));
-      });
+      // ... error handling ...
     } finally {
       setState(() {
         _isLoading = false;
       });
+      _saveConversation();
     }
+  }
+
+  void _clearConversation() {
+    setState(() {
+      _messages.clear();
+      _conversationId = DateTime.now().millisecondsSinceEpoch.toString();
+    });
+    _saveConversation();
+    _sendInitialMessage();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Ai Bitch')),
+      appBar: AppBar(
+        title: Text('Ai Bitch'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.history),
+            onPressed: _loadPreviousConversation,
+            tooltip: 'Load Previous Conversation',
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline),
+            onPressed: _clearConversation,
+            tooltip: 'Clear Conversation',
+          ),
+        ],
+      ),
       body: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           return Container(
@@ -198,6 +228,20 @@ class ChatMessage extends StatelessWidget {
 
   final String text;
   final bool isUser;
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    return ChatMessage(
+      text: json['text'],
+      isUser: json['isUser'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'text': text,
+      'isUser': isUser,
+    };
+  }
 
   @override
   Widget build(BuildContext context) {

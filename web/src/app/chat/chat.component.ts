@@ -1,21 +1,13 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { FormsModule } from "@angular/forms";
 import { CommonModule, NgClass, NgFor, NgIf } from "@angular/common";
-import { ChatService } from "../chat.service";
+import { ChatService, ChatMessage, ChatResponse } from "../chat.service";
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import {MarkdownToHtmlPipe} from "../markdown-to-html-pipe.pipe";
+import { MarkdownToHtmlPipe } from "../markdown-to-html-pipe.pipe";
 
-interface ChatMessage {
-  role: string;
+interface DisplayMessage {
+  role: 'user' | 'assistant';
   content: string;
-}
-
-interface ChatResponse {
-  message: string;
-  metadata: {
-    duration: number;
-    tokens_evaluated: number;
-  };
 }
 
 @Component({
@@ -29,9 +21,10 @@ interface ChatResponse {
 export class ChatComponent implements OnInit, AfterViewInit {
   @ViewChild('chatInput') chatInputElement!: ElementRef<HTMLTextAreaElement>;
 
-  messages: ChatMessage[] = [];
+  messages: DisplayMessage[] = [];
   userInput = '';
   isLoading = false;
+  conversationId: string | null = null;
 
   constructor(
     private chatService: ChatService,
@@ -54,7 +47,6 @@ export class ChatComponent implements OnInit, AfterViewInit {
 
   onKeyDown(event: KeyboardEvent) {
     const textarea = event.target as HTMLTextAreaElement;
-
     if (event.key === 'Enter') {
       if (event.shiftKey) {
         this.resizeTextarea();
@@ -79,7 +71,7 @@ export class ChatComponent implements OnInit, AfterViewInit {
   sendMessage() {
     if (this.userInput.trim() === '' || this.isLoading) return;
 
-    const userMessage: ChatMessage = { role: 'user', content: this.userInput };
+    const userMessage: DisplayMessage = { role: 'user', content: this.userInput };
     this.messages.push(userMessage);
     this.isLoading = true;
 
@@ -87,7 +79,15 @@ export class ChatComponent implements OnInit, AfterViewInit {
     this.userInput = ''; // Clear input immediately
     this.resizeTextarea();
 
-    this.chatService.sendMessage(userInputCopy).subscribe({
+    const chatMessage: ChatMessage = {
+      message: userInputCopy,
+    };
+
+    if (this.conversationId) {
+      chatMessage.conversation_id = this.conversationId;
+    }
+
+    this.chatService.sendMessage(chatMessage).subscribe({
       next: (response) => {
         this.handleResponse(response);
       },
@@ -97,6 +97,7 @@ export class ChatComponent implements OnInit, AfterViewInit {
           role: 'assistant',
           content: 'Sorry, an error occurred. Please try again.'
         });
+        this.isLoading = false;
       },
       complete: () => {
         this.isLoading = false;
@@ -105,8 +106,11 @@ export class ChatComponent implements OnInit, AfterViewInit {
   }
 
   private handleResponse(response: ChatResponse) {
-    const assistantMessage: ChatMessage = { role: 'assistant', content: response.message };
+    const assistantMessage: DisplayMessage = { role: 'assistant', content: response.message };
     this.messages.push(assistantMessage);
+
+    // Always update the conversation ID
+    this.conversationId = response.metadata.conversation_id;
 
     console.log(`Response generated in ${response.metadata.duration.toFixed(2)} seconds`);
     console.log(`Tokens evaluated: ${response.metadata.tokens_evaluated}`);
@@ -117,7 +121,6 @@ export class ChatComponent implements OnInit, AfterViewInit {
     const formattedContent = content.replace(/```([\s\S]*?)```/g, (match, code) => {
       return `<pre><code>${this.escapeHtml(code.trim())}</code></pre>`;
     });
-
     // Sanitize the HTML to prevent XSS attacks
     return this.sanitizer.bypassSecurityTrustHtml(formattedContent);
   }
