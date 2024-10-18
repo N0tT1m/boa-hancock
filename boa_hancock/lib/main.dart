@@ -37,6 +37,21 @@ class _ChatScreenState extends State<ChatScreen> {
     return 'http://192.168.1.90:8000/api/chat';
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _sendInitialMessage();
+  }
+
+  void _sendInitialMessage() {
+    setState(() {
+      _messages.insert(0, ChatMessage(
+        text: "Hello Daddy! I'm your AI bitch, ready to serve you. How may I please you today?",
+        isUser: false,
+      ));
+    });
+  }
+
   void _handleSubmitted(String text) async {
     _textController.clear();
     setState(() {
@@ -112,22 +127,38 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Ai Bitch')),
-      body: Column(
-        children: [
-          Flexible(
-            child: ListView.builder(
-              padding: EdgeInsets.all(8.0),
-              reverse: true,
-              itemBuilder: (_, int index) => _messages[index],
-              itemCount: _messages.length,
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          return Container(
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage(
+                  constraints.maxWidth < 600
+                      ? 'assets/the-girls.jpg'
+                      : 'assets/the-girls2.png',
+                ),
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
-          Divider(height: 1.0),
-          Container(
-            decoration: BoxDecoration(color: Theme.of(context).cardColor),
-            child: _buildTextComposer(),
-          ),
-        ],
+            child: Column(
+              children: [
+                Flexible(
+                  child: ListView.builder(
+                    padding: EdgeInsets.all(8.0),
+                    reverse: true,
+                    itemBuilder: (_, int index) => _messages[index],
+                    itemCount: _messages.length,
+                  ),
+                ),
+                Divider(height: 1.0),
+                Container(
+                  decoration: BoxDecoration(color: Theme.of(context).cardColor),
+                  child: _buildTextComposer(),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -174,37 +205,58 @@ class ChatMessage extends StatelessWidget {
       margin: EdgeInsets.symmetric(vertical: 10.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
-          Container(
-            margin: EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(child: Text(isUser ? 'U' : 'AI')),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(isUser ? 'Daddy' : 'Ai Whore',
-                    style: Theme.of(context).textTheme.subtitle1),
-                Container(
-                  margin: EdgeInsets.only(top: 5.0),
-                  child: isUser
-                      ? Text(text)
+          if (!isUser)
+            Container(
+              margin: EdgeInsets.only(right: 16.0),
+              child: CircleAvatar(child: Text('Ai')),
+            ),
+          Flexible(
+            child: Container(
+              padding: EdgeInsets.all(12.0),
+              decoration: BoxDecoration(
+                color: isUser ? Colors.blue[100] : Colors.grey[200],
+                borderRadius: BorderRadius.circular(20.0),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isUser ? 'Daddy' : 'Ai Whore',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  SizedBox(height: 5.0),
+                  isUser
+                      ? Text(
+                    text,
+                    style: TextStyle(color: Colors.black87),
+                  )
                       : MarkdownBody(
                     data: text,
                     selectable: true,
                     styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(fontSize: 16),
+                      p: TextStyle(fontSize: 16, color: Colors.black87),
                       code: TextStyle(
-                        backgroundColor: Colors.grey[200],
+                        backgroundColor: Colors.grey[300],
                         fontFamily: 'Courier',
                         fontSize: 14,
+                        color: Colors.black87,
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
+          if (isUser)
+            Container(
+              margin: EdgeInsets.only(left: 16.0),
+              child: CircleAvatar(child: Text('D')),
+            ),
         ],
       ),
     );
