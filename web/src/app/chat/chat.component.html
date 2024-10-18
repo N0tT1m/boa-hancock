@@ -1,0 +1,29 @@
+<div class="chat-container">
+  <div class="chat-header">
+    AI Chat Assistant
+  </div>
+  <div class="chat-messages">
+    <div *ngFor="let message of messages" class="message" [ngClass]="message.role">
+      <div class="message-bubble">
+        <div class="message-sender">{{ message.role === 'user' ? 'Daddy' : 'Ai Whore' }}</div>
+        <div class="message-content" [innerHTML]="formatMessage(message.content)"></div>
+      </div>
+    </div>
+    <div *ngIf="isLoading" class="loading-message">
+      <div class="loading-animation"></div>
+      <p>AI is thinking...</p>
+    </div>
+  </div>
+  <div class="chat-input">
+    <textarea
+      #chatInput
+      class="single-line-textarea"
+      [(ngModel)]="userInput"
+      (keydown)="onKeyDown($event)"
+      placeholder="Type your message... (Shift+Enter for new line, ```code``` for code blocks)"
+      [disabled]="isLoading"
+      rows="1"
+    ></textarea>
+    <button (click)="sendMessage()" [disabled]="isLoading">Send</button>
+  </div>
+</div>
