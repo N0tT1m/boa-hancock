@@ -2,14 +2,17 @@ import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
 import { AppComponent } from './app.component';
-import { ChatComponent } from './chat/chat.component';
-import { StartWindowComponent } from './start-window/start-window.component';
-import { WebSocketService } from './websocket.service';
+import { MarkdownToHtmlPipe } from './markdown-to-html-pipe.pipe';
 
 @NgModule({
-  declarations: [],
-  imports: [BrowserModule, FormsModule],
-  providers: [WebSocketService],
+  declarations: [
+    MarkdownToHtmlPipe
+  ],
+  imports: [
+    BrowserModule,
+    FormsModule
+  ],
+  providers: [],
   bootstrap: []
 })
-export class AppModule { }
+export class BoaHancockModule { }

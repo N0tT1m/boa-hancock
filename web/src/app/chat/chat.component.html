@@ -6,7 +6,7 @@
     <div *ngFor="let message of messages" class="message" [ngClass]="message.role">
       <div class="message-bubble">
         <div class="message-sender">{{ message.role === 'user' ? 'Daddy' : 'Ai Whore' }}</div>
-        <div class="message-content" [innerHTML]="formatMessage(message.content)"></div>
+        <div class="message-content" [innerHTML]="message.content | markdownToHtml"></div>
       </div>
     </div>
     <div *ngIf="isLoading" class="loading-message">
@@ -20,7 +20,7 @@
       class="single-line-textarea"
       [(ngModel)]="userInput"
       (keydown)="onKeyDown($event)"
-      placeholder="Type your message... (Shift+Enter for new line, ```code``` for code blocks)"
+      placeholder="Type your message... (Shift+Enter for new line)"
       [disabled]="isLoading"
       rows="1"
     ></textarea>

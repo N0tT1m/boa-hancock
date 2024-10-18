@@ -61,7 +61,13 @@ def add_calendar_event(summary, start_time, end_time, time_zone):
         raise
 
 def is_calendar_request(message):
-    return any(phrase in message.lower() for phrase in ['add calendar event', 'add a calendar reminder'])
+    return any(phrase in message.lower() for phrase in [
+        'add calendar event',
+        'add a calendar reminder',
+        'add event',
+        'add reminder',
+        'add event reminder',
+    ])
 
 def handle_calendar_request(user_input, calendar_event_info, event_creation_stage):
     if event_creation_stage is None:

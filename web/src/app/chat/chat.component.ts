@@ -3,6 +3,7 @@ import { FormsModule } from "@angular/forms";
 import { CommonModule, NgClass, NgFor, NgIf } from "@angular/common";
 import { ChatService } from "../chat.service";
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
+import {MarkdownToHtmlPipe} from "../markdown-to-html-pipe.pipe";
 
 interface ChatMessage {
   role: string;
@@ -22,7 +23,7 @@ interface ChatResponse {
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.sass'],
   standalone: true,
-  imports: [FormsModule, NgClass, NgFor, NgIf, CommonModule],
+  imports: [FormsModule, NgClass, NgFor, NgIf, CommonModule, MarkdownToHtmlPipe],
   providers: [ChatService]
 })
 export class ChatComponent implements OnInit, AfterViewInit {

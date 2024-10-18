@@ -55,7 +55,43 @@ $input-background: #fff
   margin-bottom: 4px
 
 .message-content
-  font-size: 1em
+  white-space: pre-wrap
+
+  h1, h2, h3
+    margin-top: 10px
+    margin-bottom: 5px
+
+  p
+    margin-bottom: 10px
+
+  strong
+    font-weight: bold
+
+  em
+    font-style: italic
+
+  code
+    font-family: 'Courier New', Courier, monospace
+    background-color: #f4f4f4
+    padding: 2px 4px
+    border-radius: 4px
+
+  pre
+    background-color: #f4f4f4
+    border-radius: 4px
+    padding: 10px
+    overflow-x: auto
+
+    code
+      background-color: transparent
+      padding: 0
+
+  a
+    color: #0066cc
+    text-decoration: none
+
+    &:hover
+      text-decoration: underline
 
 .chat-input
   background-color: $input-background
