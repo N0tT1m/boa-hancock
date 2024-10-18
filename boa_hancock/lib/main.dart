@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -5,7 +7,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:data_table_2/data_table_2.dart';
+import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 // Update the ImageSearchResult class
 class ImageSearchResult {
@@ -134,6 +136,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String get searchApiUrl {
     return 'http://192.168.1.90:8000/api/search';
+  }
+
+  String get documentAnalysisUrl {
+    return 'http://192.168.1.90:8000/api/analyze-document';
   }
 
   @override
@@ -414,51 +420,67 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-    body: LayoutBuilder(
-    builder: (BuildContext context, BoxConstraints constraints) {
-    return Container(
-    decoration: BoxDecoration(
-    image: DecorationImage(
-    image: AssetImage(
-    constraints.maxWidth < 600
-    ? 'assets/the-girls.jpg'
-        : 'assets/the-girls2.png',
-    ),
-    fit: BoxFit.cover,
-    ),
-    ),
-    child: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.all(8.0),
-              reverse: true,
-              itemBuilder: (_, int index) {
-                if (_messages[index] is ImageSearchResultMessage) {
-                  return LayoutBuilder(
-                    builder: (context, constraints) {
-                      return Container(
-                        width: constraints.maxWidth,
-                        child: _messages[index],
-                      );
-                    },
-                  );
-                }
-                return _messages[index];
-              },
-              itemCount: _messages.length,
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          return Container(
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage(
+                  constraints.maxWidth < 600
+                      ? 'assets/the-girls.jpg'
+                      : 'assets/the-girls2.png',
+                ),
+                fit: BoxFit.cover,
+              ),
             ),
-          ),
-          Divider(height: 1.0),
-          Container(
-            decoration: BoxDecoration(color: Theme.of(context).cardColor),
-            child: _buildTextComposer(),
-          ),
-        ],
-    ),
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    padding: EdgeInsets.all(8.0),
+                    reverse: true,
+                    itemBuilder: (_, int index) {
+                      if (_messages[index] is ImageSearchResultMessage) {
+                        return LayoutBuilder(
+                          builder: (context, constraints) {
+                            return Container(
+                              width: constraints.maxWidth,
+                              child: _messages[index],
+                            );
+                          },
+                        );
+                      }
+                      return _messages[index];
+                    },
+                    itemCount: _messages.length,
+                  ),
+                ),
+                Divider(height: 1.0),
+                Container(
+                  decoration: BoxDecoration(color: Theme.of(context).cardColor),
+                  child: Column(
+                    children: [
+                      _buildFilePickerButton(),
+                      _buildTextComposer(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
-    },
-    ),
+  }
+
+  Widget _buildFilePickerButton() {
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 8.0),
+      child: ElevatedButton.icon(
+        onPressed: _uploadAndAnalyzeDocument,
+        icon: Icon(Icons.attach_file),
+        label: Text('Select File'),
+      ),
     );
   }
 
@@ -883,7 +905,6 @@ class SearchResultMessage extends Message {
   }
 }
 
-// Update DocumentAnalysisMessage to handle Excel data
 class DocumentAnalysisMessage extends Message {
   final DocumentAnalysisResult result;
 
@@ -926,31 +947,23 @@ class DocumentAnalysisMessage extends Message {
       return Text('No Excel data available');
     }
 
-    List<DataColumn2> columns = result.excelData![0]
-        .asMap()
-        .entries
-        .map((entry) => DataColumn2(
-      label: Text('Column ${entry.key + 1}'),
-      size: ColumnSize.M,
-    ))
-        .toList();
-
-    List<DataRow> rows = result.excelData!.skip(1).map((row) {
-      return DataRow(
-        cells: row
-            .map((cell) => DataCell(Text(cell.toString())))
-            .toList(),
-      );
-    }).toList();
+    // Create a DataGridSource from the Excel data
+    final dataGridSource = ExcelDataGridSource(result.excelData!);
 
     return Container(
-      height: 200, // Set a fixed height or make it responsive
-      child: DataTable2(
-        columns: columns,
-        rows: rows,
-        scrollController: ScrollController(),
-        smRatio: 0.6,
-        lmRatio: 1.5,
+      height: 200,
+      child: SfDataGrid(
+        source: dataGridSource,
+        columnWidthMode: ColumnWidthMode.auto,
+        columns: result.excelData![0].map((header) {
+          return GridColumn(
+            columnName: header.toString(),
+            label: Container(
+              alignment: Alignment.center,
+              child: Text(header.toString()),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -966,5 +979,37 @@ class DocumentAnalysisMessage extends Message {
         'excel_data': result.excelData,
       },
     };
+  }
+}
+
+class ExcelDataGridSource extends DataGridSource {
+  final List<List<dynamic>> excelData;
+
+  ExcelDataGridSource(this.excelData) {
+    buildDataGridRows();
+  }
+
+  List<DataGridRow> dataGridRows = [];
+
+  @override
+  DataGridRowAdapter? buildRow(DataGridRow row) {
+    return DataGridRowAdapter(cells: row.getCells().map((dataGridCell) {
+      return Container(
+        alignment: Alignment.center,
+        child: Text(dataGridCell.value.toString()),
+      );
+    }).toList());
+  }
+
+
+  @override
+  List<DataGridRow> get rows => dataGridRows;
+
+  void buildDataGridRows() {
+    dataGridRows = excelData.map((row) {
+      return DataGridRow(
+        cells: row.map((cell) => DataGridCell(columnName: 'Column${row.indexOf(cell) + 1}', value: cell)).toList(),
+      );
+    }).toList();
   }
 }

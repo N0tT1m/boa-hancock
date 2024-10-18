@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Union
+from datetime import datetime
 
 class ChatResponse(BaseModel):
     message: str
@@ -48,3 +49,13 @@ class SearchResponse(BaseModel):
     results: Optional[List[SearchResult]] = None
     images: Optional[List[ImageSearchResult]] = None
 
+class Expense(BaseModel):
+    amount: float
+    category: str
+    description: str
+    date: str = datetime.now().strftime("%Y-%m-%d")
+
+class Income(BaseModel):
+    amount: float
+    source: str
+    date: str = datetime.now().strftime("%Y-%m-%d")

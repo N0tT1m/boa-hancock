@@ -8,7 +8,7 @@ Done. (Hooked up to Google Search API)
 
 3. Document analysis: Python: Use libraries like `PyPDF2` for PDFs, `python-docx` for Word documents, and `pandas` for spreadsheets. Flutter: Use plugins like `file_picker` and `pdf_text` for file handling and text extraction. Angular: Use libraries like `pdf.js` for client-side PDF parsing, or handle document processing on the server-side.
 
-Needs more work. (Needs more testing to confirm it works.)
+Done. (Hooked up to custom code that does analysis on word docs, excel / csv spreadsheets, pdf files.)
 
 4. Voice interface: Python: Use `speech_recognition` for speech-to-text and `pyttsx3` for text-to-speech. Flutter: Use the `speech_to_text` and `flutter_tts` packages. Angular: Integrate with Web Speech API for both speech recognition and synthesis.
 5. Personalization: Python: Use machine learning libraries like `scikit-learn` for user modeling. Flutter/Angular: Implement user preferences storage using local storage or server-side databases.

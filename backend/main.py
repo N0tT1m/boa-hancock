@@ -3,13 +3,18 @@ import sqlite3
 import uuid
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Metadata, DocumentAnalysisResult
+from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request
 from search_service import perform_web_search, perform_image_search, is_search_request
 from document_analysis_service import analyze_pdf, analyze_word, analyze_spreadsheet
+from expense_service import ExpenseTracker
+from typing import List, Dict, Any
 import traceback
+
+expenses: List[Dict[str, Any]] = []
+income: List[Dict[str, Any]] = []
 
 # Setup logging
 logger = setup_logging()
@@ -40,6 +45,22 @@ c.execute('''CREATE TABLE IF NOT EXISTS conversations
               content TEXT,
               timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 conn.commit()
+
+# SQLite setup
+conn2 = sqlite3.connect('expense_tracker.db')
+c2 = conn.cursor()
+c2.execute('''CREATE TABLE IF NOT EXISTS expenses
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              amount REAL,
+              category TEXT,
+              description TEXT,
+              date DATE)''')
+c2.execute('''CREATE TABLE IF NOT EXISTS income
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              amount REAL,
+              source TEXT,
+              date DATE)''')
+conn2.commit()
 
 def get_last_conversation(limit=5):
     c.execute("""
@@ -151,6 +172,45 @@ async def analyze_document(file: UploadFile = File(...)):
         logger.error(f"Error analyzing document: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error analyzing document: {str(e)}")
+
+@app.post("/api/expense", response_model=dict)
+async def add_expense(expense: Expense):
+    try:
+        c.execute("INSERT INTO expenses (amount, category, description, date) VALUES (?, ?, ?, ?)",
+                  (expense.amount, expense.category, expense.description, expense.date))
+        conn.commit()
+        return {"message": "Expense added successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding expense: {str(e)}")
+
+@app.post("/api/income", response_model=dict)
+async def add_income(income: Income):
+    try:
+        c.execute("INSERT INTO income (amount, source, date) VALUES (?, ?, ?)",
+                  (income.amount, income.source, income.date))
+        conn.commit()
+        return {"message": "Income added successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding income: {str(e)}")
+
+@app.get("/api/expenses", response_model=list)
+async def get_expenses():
+    try:
+        c.execute("SELECT * FROM expenses")
+        expenses = c.fetchall()
+        return [{"id": e[0], "amount": e[1], "category": e[2],
+                 "description": e[3], "date": e[4]} for e in expenses]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving expenses: {str(e)}")
+
+@app.get("/api/income", response_model=list)
+async def get_income():
+    try:
+        c.execute("SELECT * FROM income")
+        income_entries = c.fetchall()
+        return [{"id": i[0], "amount": i[1], "source": i[2], "date": i[3]} for i in income_entries]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving income: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
