@@ -19,7 +19,7 @@ def setup_ollama():
     except Exception as e:
         logger.error(f"Error pulling model: {str(e)}")
         raise
-    ollama_client = Client(host='http://localhost:11434')
+    ollama_client = Client(host='http://192.168.1.71:11434')
     logger.info("Ollama client initialized")
     return ollama_client
 
