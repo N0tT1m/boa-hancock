@@ -3,6 +3,9 @@ $blue-bubble: #007aff
 $gray-bubble: #e5e5ea
 $text-color: #000
 $input-background: #fff
+$border-color: #ccc
+$focus-color: #4a90e2
+$button-hover: #0056b3
 
 .chat-container
   display: flex
@@ -13,21 +16,25 @@ $input-background: #fff
   background-image: url("/assets/the-girls.png")
   background-size: cover
   background-position: center
+  background-attachment: fixed
 
 .chat-header
-  background-color: #f0f0f0
+  background-color: #007bff
+  color: white
   padding: 15px
   text-align: center
   font-weight: bold
-  border-bottom: 1px solid #ccc
+  font-size: 1.2em
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1)
 
 .chat-messages
   flex-grow: 1
   overflow-y: auto
-  padding: 10px
+  padding: 20px
+  background-color: transparent
 
 .message
-  margin-bottom: 10px
+  margin-bottom: 15px
   max-width: 80%
   clear: both
 
@@ -37,6 +44,7 @@ $input-background: #fff
       background-color: $blue-bubble
       color: #fff
       border-radius: 18px 18px 0 18px
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1)
 
   &.assistant
     float: left
@@ -44,108 +52,180 @@ $input-background: #fff
       background-color: $gray-bubble
       color: $text-color
       border-radius: 18px 18px 18px 0
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1)
 
 .message-bubble
-  padding: 8px 12px
+  padding: 12px 16px
   word-wrap: break-word
 
 .message-sender
   font-size: 0.9em
   font-weight: bold
-  margin-bottom: 4px
+  margin-bottom: 6px
+  text-shadow: 1px 1px 1px rgba(255, 255, 255, 0.5)
 
 .message-content
   white-space: pre-wrap
-
-  h1, h2, h3
-    margin-top: 10px
-    margin-bottom: 5px
-
-  p
-    margin-bottom: 10px
-
-  strong
-    font-weight: bold
-
-  em
-    font-style: italic
-
-  code
-    font-family: 'Courier New', Courier, monospace
-    background-color: #f4f4f4
-    padding: 2px 4px
-    border-radius: 4px
-
-  pre
-    background-color: #f4f4f4
-    border-radius: 4px
-    padding: 10px
-    overflow-x: auto
-
-    code
-      background-color: transparent
-      padding: 0
-
-  a
-    color: #0066cc
-    text-decoration: none
-
-    &:hover
-      text-decoration: underline
+  line-height: 1.4
 
 .chat-input
   background-color: $input-background
-  padding: 10px
+  padding: 15px
   display: flex
-  border-top: 1px solid #ccc
+  border-top: 1px solid $border-color
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05)
 
   .single-line-textarea
     flex-grow: 1
-    padding: 10px
-    border: 1px solid #ccc
-    border-radius: 20px
-    margin-right: 10px
+    padding: 12px 15px
+    border: 1px solid $border-color
+    border-radius: 25px
+    margin-right: 15px
     resize: none
     overflow: hidden
     line-height: 20px
-    max-height: 40px
-    transition: max-height 0.2s ease
+    max-height: 100px
+    transition: all 0.3s ease
+    font-size: 16px
 
     &:focus
       outline: none
-      border-color: $blue-bubble
+      border-color: $focus-color
+      box-shadow: 0 0 0 2px rgba($focus-color, 0.2)
 
     &.multiline
-      max-height: 100px
-      overflow-y: auto
+      border-radius: 15px
 
   button
     background-color: $blue-bubble
     color: #fff
     border: none
-    padding: 10px 20px
-    border-radius: 20px
+    padding: 12px 25px
+    border-radius: 25px
     cursor: pointer
+    font-size: 16px
+    transition: background-color 0.3s ease, transform 0.1s ease
+
+    &:hover
+      background-color: $button-hover
+      transform: translateY(-1px)
+
+    &:active
+      transform: translateY(1px)
 
     &:disabled
-      opacity: 0.5
+      opacity: 0.6
       cursor: not-allowed
+      transform: none
 
 .loading-message
   text-align: center
   color: #888
-  margin: 10px 0
+  margin: 15px 0
+  font-style: italic
+  background-color: rgba(255, 255, 255, 0.8)
+  padding: 10px
+  border-radius: 10px
 
 .loading-animation
-// Add loading animation styles here, e.g., a spinning circle
+  width: 40px
+  height: 40px
+  border: 3px solid #f3f3f3
+  border-top: 3px solid #3498db
+  border-radius: 50%
+  animation: spin 1s linear infinite
+  margin: 10px auto
 
-// Styles for code blocks
+@keyframes spin
+  0%
+    transform: rotate(0deg)
+  100%
+    transform: rotate(360deg)
+
 pre
   background-color: #f4f4f4
-  border-radius: 4px
-  padding: 10px
+  border-radius: 8px
+  padding: 15px
   overflow-x: auto
+  margin: 10px 0
 
 code
   font-family: 'Courier New', Courier, monospace
   font-size: 0.9em
+
+.search-results
+  margin-top: 15px
+
+.search-result
+  margin-bottom: 15px
+  padding: 15px
+  background-color: white
+  border-radius: 8px
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1)
+  transition: transform 0.2s ease
+
+  &:hover
+    transform: translateY(-2px)
+
+  a
+    color: #1a0dab
+    text-decoration: none
+    font-size: 1.1em
+    font-weight: bold
+
+    &:hover
+      text-decoration: underline
+
+  p
+    margin: 8px 0
+    font-size: 0.95em
+    color: #545454
+    line-height: 1.4
+
+.image-grid
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr))
+  gap: 20px
+  padding: 16px
+
+.image-result
+  display: flex
+  flex-direction: column
+  background-color: #f0f0f0
+  border-radius: 8px
+  overflow: hidden
+  transition: transform 0.2s ease-in-out
+
+  &:hover
+    transform: scale(1.05)
+
+.image-link
+  text-decoration: none
+  color: inherit
+
+img
+  width: 100%
+  height: 150px
+  object-fit: cover
+
+.image-info
+  padding: 12px
+
+.image-title
+  font-size: 14px
+  font-weight: bold
+  margin-bottom: 4px
+  // Use line-clamp to limit to 2 lines
+  display: -webkit-box
+  -webkit-line-clamp: 2
+  -webkit-box-orient: vertical
+  overflow: hidden
+
+.image-display-link
+  font-size: 12px
+  color: #666
+  // Use line-clamp to limit to 1 line
+  display: -webkit-box
+  -webkit-line-clamp: 1
+  -webkit-box-orient: vertical
+  overflow: hidden

@@ -1,10 +1,93 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:data_table_2/data_table_2.dart';
+
+// Update the ImageSearchResult class
+class ImageSearchResult {
+  final String title;
+  final String link;
+  final String thumbnailLink;
+  final String displayLink;
+  final String mime;
+  final String? fileFormat;
+  final String? contextLink;
+
+  ImageSearchResult({
+    required this.title,
+    required this.link,
+    required this.thumbnailLink,
+    required this.displayLink,
+    required this.mime,
+    this.fileFormat,
+    this.contextLink,
+  });
+
+  factory ImageSearchResult.fromJson(Map<String, dynamic> json) {
+    return ImageSearchResult(
+      title: json['title'] ?? '',
+      link: json['link'] ?? '',
+      thumbnailLink: json['thumbnailLink'] ?? '',
+      displayLink: json['displayLink'] ?? '',
+      mime: json['mime'] ?? '',
+      fileFormat: json['fileFormat'],
+      contextLink: json['contextLink'],
+    );
+  }
+}
+
+// Update the WebSearchResult class
+class WebSearchResult {
+  final String title;
+  final String link;
+  final String snippet;
+
+  WebSearchResult({
+    required this.title,
+    required this.link,
+    required this.snippet,
+  });
+
+  factory WebSearchResult.fromJson(Map<String, dynamic> json) {
+    return WebSearchResult(
+      title: json['title'] ?? '',
+      link: json['link'] ?? '',
+      snippet: json['snippet'] ?? '',
+    );
+  }
+}
+
+// Update DocumentAnalysisResult to handle Excel data
+class DocumentAnalysisResult {
+  final String filename;
+  final String content;
+  final Map<String, dynamic> metadata;
+  final List<List<dynamic>>? excelData;
+
+  DocumentAnalysisResult({
+    required this.filename,
+    required this.content,
+    required this.metadata,
+    this.excelData,
+  });
+
+  factory DocumentAnalysisResult.fromJson(Map<String, dynamic> json) {
+    return DocumentAnalysisResult(
+      filename: json['filename'] ?? '',
+      content: json['content'] ?? '',
+      metadata: json['metadata'] ?? {},
+      excelData: json['excel_data'] != null
+          ? List<List<dynamic>>.from(json['excel_data']
+          .map((row) => List<dynamic>.from(row)))
+          : null,
+    );
+  }
+}
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,7 +123,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final List<ChatMessage> _messages = [];
+  final List<Message> _messages = [];
   final TextEditingController _textController = TextEditingController();
   bool _isLoading = false;
   late String _conversationId;
@@ -49,11 +132,14 @@ class _ChatScreenState extends State<ChatScreen> {
     return 'http://192.168.1.90:8000/api/chat';
   }
 
+  String get searchApiUrl {
+    return 'http://192.168.1.90:8000/api/search';
+  }
+
   @override
   void initState() {
     super.initState();
     _conversationId = widget.prefs.getString('conversation_id') ?? DateTime.now().millisecondsSinceEpoch.toString();
-    // Do not load messages automatically
     _sendInitialMessage();
   }
 
@@ -61,8 +147,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final messagesJson = widget.prefs.getString('messages') ?? '[]';
     final List<dynamic> messagesList = jsonDecode(messagesJson);
     setState(() {
-      _messages.clear(); // Clear existing messages before loading
-      _messages.addAll(messagesList.map((m) => ChatMessage.fromJson(m)).toList());
+      _messages.clear();
+      _messages.addAll(messagesList.map((m) => Message.fromJson(m)).toList());
     });
   }
 
@@ -74,13 +160,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void _sendInitialMessage() {
     setState(() {
       _messages.insert(0, ChatMessage(
-        text: "Hello Daddy! I'm your AI bitch, ready to serve you. How may I please you today?",
+        text: "Hello! I'm your Ai Bitch. How may I please you today?",
         isUser: false,
       ));
     });
     _saveConversation();
   }
 
+  // Update the _handleSubmitted method
   void _handleSubmitted(String text) async {
     _textController.clear();
     setState(() {
@@ -92,8 +179,142 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _saveConversation();
 
+    if (text.toLowerCase().startsWith('image search ')) {
+      await _performImageSearch(text.substring(13));
+    } else if (text.toLowerCase().startsWith('search for ')) {
+      await _performWebSearch(text.substring(11));
+    } else {
+      await _sendMessage(text);
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+    _saveConversation();
+  }
+
+  Future<void> _uploadAndAnalyzeDocument() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv'],
+    );
+
+    if (result != null) {
+      PlatformFile file = result.files.first;
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        var request = http.MultipartRequest('POST', Uri.parse(documentAnalysisUrl));
+        request.files.add(await http.MultipartFile.fromPath('file', file.path!));
+        var response = await request.send();
+
+        if (response.statusCode == 200) {
+          final respStr = await response.stream.bytesToString();
+          final analysisResult = DocumentAnalysisResult.fromJson(json.decode(respStr));
+
+          setState(() {
+            _messages.insert(0, DocumentAnalysisMessage(result: analysisResult));
+          });
+        } else {
+          throw Exception('Failed to analyze document');
+        }
+      } catch (e) {
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Error analyzing document: ${e.toString()}',
+            isUser: false,
+          ));
+        });
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  // Update the _performSearch method in the ChatScreen class
+  Future<void> _performImageSearch(String query) async {
     try {
-      print('Attempting to connect to: $apiUrl');
+      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=image'));
+
+      if (response.statusCode == 200) {
+        final searchData = json.decode(response.body);
+
+        if (searchData['images'] != null) {
+          final imageResults = (searchData['images'] as List)
+              .map((item) => ImageSearchResult.fromJson(item))
+              .toList();
+
+          setState(() {
+            _messages.insert(0, ImageSearchResultMessage(results: imageResults));
+          });
+        } else {
+          setState(() {
+            _messages.insert(0, ChatMessage(
+              text: 'No image results found.',
+              isUser: false,
+            ));
+          });
+        }
+      } else {
+        throw Exception('Failed to load search results');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error performing search: ${e.toString()}',
+          isUser: false,
+        ));
+      });
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  // Update the _performWebSearch method
+  Future<void> _performWebSearch(String query) async {
+    try {
+      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=web'));
+
+      if (response.statusCode == 200) {
+        final searchData = json.decode(response.body);
+
+        if (searchData['results'] != null) {
+          final webResults = (searchData['results'] as List)
+              .map((item) => WebSearchResult.fromJson(item))
+              .toList();
+
+          setState(() {
+            _messages.insert(0, WebSearchResultMessage(results: webResults));
+          });
+        } else {
+          setState(() {
+            _messages.insert(0, ChatMessage(
+              text: 'No web results found.',
+              isUser: false,
+            ));
+          });
+        }
+      } else {
+        throw Exception('Failed to load search results');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error performing web search: ${e.toString()}',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<void> _sendMessage(String text) async {
+    try {
       final response = await http.post(
         Uri.parse(apiUrl),
         headers: {'Content-Type': 'application/json'},
@@ -103,9 +324,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }),
       ).timeout(Duration(seconds: 10));
 
-      print('Response status code: ${response.statusCode}');
-      print('Response body: ${response.body}');
-
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         setState(() {
@@ -113,21 +331,60 @@ class _ChatScreenState extends State<ChatScreen> {
             text: responseData['message'],
             isUser: false,
           ));
-          // Update the conversation ID if it's a new conversation
           _conversationId = responseData['metadata']['conversation_id'];
         });
-        _saveConversation();
       } else {
-        throw HttpException('Failed to load response');
+        throw Exception('Failed to load response');
       }
     } catch (e) {
-      // ... error handling ...
-    } finally {
       setState(() {
-        _isLoading = false;
+        _messages.insert(0, ChatMessage(
+          text: 'Error: Unable to get response. Please try again.',
+          isUser: false,
+        ));
       });
-      _saveConversation();
     }
+  }
+
+  // Update the _performSearch method in the ChatScreen class
+  Future<void> _performSearch(String query) async {
+    try {
+      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=image'));
+
+      if (response.statusCode == 200) {
+        final searchData = json.decode(response.body);
+
+        if (searchData['images'] != null) {
+          final imageResults = (searchData['images'] as List)
+              .map((item) => ImageSearchResult.fromJson(item))
+              .toList();
+
+          setState(() {
+            _messages.insert(0, ImageSearchResultMessage(results: imageResults));
+          });
+        } else {
+          setState(() {
+            _messages.insert(0, ChatMessage(
+              text: 'No image results found.',
+              isUser: false,
+            ));
+          });
+        }
+      } else {
+        throw Exception('Failed to load search results');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error performing search: ${e.toString()}',
+          isUser: false,
+        ));
+      });
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   void _clearConversation() {
@@ -157,39 +414,51 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          return Container(
-            decoration: BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage(
-                  constraints.maxWidth < 600
-                      ? 'assets/the-girls.jpg'
-                      : 'assets/the-girls2.png',
-                ),
-                fit: BoxFit.cover,
-              ),
+    body: LayoutBuilder(
+    builder: (BuildContext context, BoxConstraints constraints) {
+    return Container(
+    decoration: BoxDecoration(
+    image: DecorationImage(
+    image: AssetImage(
+    constraints.maxWidth < 600
+    ? 'assets/the-girls.jpg'
+        : 'assets/the-girls2.png',
+    ),
+    fit: BoxFit.cover,
+    ),
+    ),
+    child: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              padding: EdgeInsets.all(8.0),
+              reverse: true,
+              itemBuilder: (_, int index) {
+                if (_messages[index] is ImageSearchResultMessage) {
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      return Container(
+                        width: constraints.maxWidth,
+                        child: _messages[index],
+                      );
+                    },
+                  );
+                }
+                return _messages[index];
+              },
+              itemCount: _messages.length,
             ),
-            child: Column(
-              children: [
-                Flexible(
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(8.0),
-                    reverse: true,
-                    itemBuilder: (_, int index) => _messages[index],
-                    itemCount: _messages.length,
-                  ),
-                ),
-                Divider(height: 1.0),
-                Container(
-                  decoration: BoxDecoration(color: Theme.of(context).cardColor),
-                  child: _buildTextComposer(),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+          ),
+          Divider(height: 1.0),
+          Container(
+            decoration: BoxDecoration(color: Theme.of(context).cardColor),
+            child: _buildTextComposer(),
+          ),
+        ],
+    ),
+    );
+    },
+    ),
     );
   }
 
@@ -204,7 +473,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _textController,
                 onSubmitted: _isLoading ? null : _handleSubmitted,
-                decoration: InputDecoration.collapsed(hintText: 'Send a message'),
+                decoration: InputDecoration.collapsed(hintText: 'Send a message or search'),
               ),
             ),
             Container(
@@ -223,11 +492,151 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class ChatMessage extends StatelessWidget {
-  ChatMessage({required this.text, required this.isUser});
+class ImageSearchResultMessage extends Message {
+  final List<ImageSearchResult> results;
 
+  ImageSearchResultMessage({required this.results});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Image Search Results:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 12.0),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.7,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+              ),
+              itemCount: results.length,
+              itemBuilder: (context, index) {
+                final result = results[index];
+                return Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  child: InkWell(
+                    onTap: () => _launchURL(result.contextLink ?? result.link),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.vertical(top: Radius.circular(8.0)),
+                            child: Image.network(
+                              result.thumbnailLink,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                result.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 14.0, fontWeight: FontWeight.bold),
+                              ),
+                              SizedBox(height: 4.0),
+                              Text(
+                                result.displayLink,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12.0, color: Colors.blue),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'imageSearch',
+      'results': results.map((r) => {
+        'title': r.title,
+        'link': r.link,
+        'thumbnailLink': r.thumbnailLink,
+        'displayLink': r.displayLink,
+        'mime': r.mime,
+        'fileFormat': r.fileFormat,
+        'contextLink': r.contextLink,
+      }).toList(),
+    };
+  }
+
+  void _launchURL(String url) async {
+    if (await canLaunch(url)) {
+      await launch(url);
+    }
+  }
+}
+
+// Update the Message.fromJson factory method
+abstract class Message extends StatelessWidget {
+  const Message({Key? key}) : super(key: key);
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    switch (json['type']) {
+      case 'chat':
+        return ChatMessage.fromJson(json);
+      case 'searchInfo':
+        return SearchInfoMessage(resultCount: json['resultCount']);
+      case 'imageSearch':
+        return ImageSearchResultMessage(
+          results: (json['results'] as List)
+              .map((item) => ImageSearchResult.fromJson(item))
+              .toList(),
+        );
+      case 'webSearch':
+        return WebSearchResultMessage(
+          results: (json['results'] as List)
+              .map((item) => WebSearchResult.fromJson(item))
+              .toList(),
+        );
+      default:
+        throw ArgumentError('Unknown message type: ${json['type']}');
+    }
+  }
+
+  Map<String, dynamic> toJson();
+}
+
+class ChatMessage extends Message {
   final String text;
   final bool isUser;
+
+  ChatMessage({required this.text, required this.isUser});
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
@@ -236,8 +645,10 @@ class ChatMessage extends StatelessWidget {
     );
   }
 
+  @override
   Map<String, dynamic> toJson() {
     return {
+      'type': 'chat',
       'text': text,
       'isUser': isUser,
     };
@@ -304,5 +715,256 @@ class ChatMessage extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// Update the WebSearchResultMessage class
+class WebSearchResultMessage extends Message {
+  final List<WebSearchResult> results;
+
+  WebSearchResultMessage({required this.results});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Web Search Results:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 12.0),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: NeverScrollableScrollPhysics(),
+              itemCount: results.length,
+              itemBuilder: (context, index) {
+                final result = results[index];
+                return Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  child: ListTile(
+                    title: Text(
+                      result.title,
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          result.snippet,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          result.link,
+                          style: TextStyle(color: Colors.blue),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                    onTap: () => _launchURL(result.link),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'webSearch',
+      'results': results.map((r) => {
+        'title': r.title,
+        'link': r.link,
+        'snippet': r.snippet,
+      }).toList(),
+    };
+  }
+
+  void _launchURL(String url) async {
+    if (await canLaunch(url)) {
+      await launch(url);
+    } else {
+      print('Could not launch $url');
+    }
+  }
+}
+
+class SearchInfoMessage extends Message {
+  final int resultCount;
+
+  SearchInfoMessage({required this.resultCount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 10.0),
+      padding: EdgeInsets.all(10.0),
+      decoration: BoxDecoration(
+        color: Colors.blue[100],
+        borderRadius: BorderRadius.circular(10.0),
+      ),
+      child: Text(
+        'Found $resultCount results',
+        style: Theme.of(context).textTheme.subtitle2,
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'searchInfo',
+      'resultCount': resultCount,
+    };
+  }
+}
+
+class SearchResultMessage extends Message {
+  final Map<String, dynamic> result;
+
+  SearchResultMessage({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.symmetric(vertical: 5.0),
+      child: ListTile(
+        title: Text(
+          result['title'] ?? 'No title available',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(result['snippet'] ?? 'No snippet available'),
+            SizedBox(height: 4),
+            Text(
+              result['link'] ?? 'No link available',
+              style: TextStyle(color: Colors.blue),
+            ),
+          ],
+        ),
+        onTap: () => _launchURL(result['link']),
+      ),
+    );
+  }
+
+  void _launchURL(String? url) async {
+    if (url != null && await canLaunch(url)) {
+      await launch(url);
+    } else {
+      print('Could not launch $url');
+    }
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'searchResult',
+      'result': result,
+    };
+  }
+}
+
+// Update DocumentAnalysisMessage to handle Excel data
+class DocumentAnalysisMessage extends Message {
+  final DocumentAnalysisResult result;
+
+  DocumentAnalysisMessage({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Document Analysis Result:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 8.0),
+            Text('Filename: ${result.filename}'),
+            SizedBox(height: 4.0),
+            if (result.excelData == null)
+              Text('Content Preview: ${result.content.substring(0, min(100, result.content.length))}...')
+            else
+              _buildExcelPreview(),
+            SizedBox(height: 4.0),
+            Text('Metadata:'),
+            ...result.metadata.entries.map((entry) => Text('  ${entry.key}: ${entry.value}')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExcelPreview() {
+    if (result.excelData == null || result.excelData!.isEmpty) {
+      return Text('No Excel data available');
+    }
+
+    List<DataColumn2> columns = result.excelData![0]
+        .asMap()
+        .entries
+        .map((entry) => DataColumn2(
+      label: Text('Column ${entry.key + 1}'),
+      size: ColumnSize.M,
+    ))
+        .toList();
+
+    List<DataRow> rows = result.excelData!.skip(1).map((row) {
+      return DataRow(
+        cells: row
+            .map((cell) => DataCell(Text(cell.toString())))
+            .toList(),
+      );
+    }).toList();
+
+    return Container(
+      height: 200, // Set a fixed height or make it responsive
+      child: DataTable2(
+        columns: columns,
+        rows: rows,
+        scrollController: ScrollController(),
+        smRatio: 0.6,
+        lmRatio: 1.5,
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'documentAnalysis',
+      'result': {
+        'filename': result.filename,
+        'content': result.content,
+        'metadata': result.metadata,
+        'excel_data': result.excelData,
+      },
+    };
   }
 }

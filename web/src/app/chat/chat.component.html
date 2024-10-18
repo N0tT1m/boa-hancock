@@ -1,29 +1,99 @@
 <div class="chat-container">
   <div class="chat-header">
-    Ai Assistant to the Whore
+    AI Assistant
   </div>
+
   <div class="chat-messages">
     <div *ngFor="let message of messages" class="message" [ngClass]="message.role">
       <div class="message-bubble">
-        <div class="message-sender">{{ message.role === 'user' ? 'Daddy' : 'Ai Whore' }}</div>
+        <div class="message-sender">{{ message.role === 'user' ? 'You' : 'AI Assistant' }}</div>
         <div class="message-content" [innerHTML]="message.content | markdownToHtml"></div>
+
+        <!-- Regular search results -->
+        <ng-container *ngIf="message.role === 'web-search' && message.searchResults">
+          <div class="search-results">
+            <div *ngFor="let result of message.searchResults" class="search-result">
+              <a [href]="result.link" target="_blank">{{ result.title }}</a>
+              <p>{{ result.snippet }}</p>
+              <small class="search-result-link">{{ result.link }}</small>
+            </div>
+          </div>
+        </ng-container>
+
+        <!-- Image search results -->
+        <ng-container *ngIf="message.role === 'image-search' && message.imageResults">
+          <div class="image-search-results">
+            <div class="image-grid">
+              <div *ngFor="let image of message.imageResults" class="image-result">
+                <a [href]="image.link" target="_blank" class="image-link">
+                  <img [src]="image.thumbnailLink" [alt]="image.title">
+                  <div class="image-info">
+                    <div class="image-title">{{ image.title }}</div>
+                    <div class="image-display-link">{{ image.displayLink }}</div>
+                  </div>
+                </a>
+              </div>
+            </div>
+          </div>
+        </ng-container>
+
+        <!-- Document Analysis Result -->
+        <ng-container *ngIf="message.documentAnalysis">
+          <div class="document-analysis">
+            <h4>Document Analysis Result:</h4>
+            <p>Filename: {{ message.documentAnalysis.filename }}</p>
+            <p>Metadata:</p>
+            <ul>
+              <li *ngFor="let item of message.documentAnalysis.metadata | keyvalue">
+                {{ item.key }}: {{ item.value }}
+              </li>
+            </ul>
+            <ng-container *ngIf="message.documentAnalysis.excel_data">
+              <h5>Excel Data Preview:</h5>
+              <div class="excel-preview">
+                <table>
+                  <thead>
+                  <tr>
+                    <th *ngFor="let header of message.documentAnalysis.excel_data[0]">{{ header }}</th>
+                  </tr>
+                  </thead>
+                  <tbody>
+                  <tr *ngFor="let row of message.documentAnalysis.excel_data.slice(1, 6)">
+                    <td *ngFor="let cell of row">{{ cell }}</td>
+                  </tr>
+                  </tbody>
+                </table>
+                <p *ngIf="message.documentAnalysis.excel_data.length > 6">
+                  Showing first 5 rows of {{ message.documentAnalysis.excel_data.length - 1 }} total rows.
+                </p>
+              </div>
+            </ng-container>
+            <ng-container *ngIf="!message.documentAnalysis.excel_data">
+              <h5>Content Preview:</h5>
+              <p>{{ message.documentAnalysis.content | slice:0:200 }}...</p>
+            </ng-container>
+          </div>
+        </ng-container>
       </div>
     </div>
+
     <div *ngIf="isLoading" class="loading-message">
       <div class="loading-animation"></div>
       <p>AI is thinking...</p>
     </div>
   </div>
+
   <div class="chat-input">
     <textarea
       #chatInput
       class="single-line-textarea"
       [(ngModel)]="userInput"
-      (keydown)="onKeyDown($event)"
-      placeholder="Type your message... (Shift+Enter for new line)"
+      (keydown.enter)="sendMessage()"
+      placeholder="Type your message or 'search for [query]' or 'image search [query]'..."
       [disabled]="isLoading"
       rows="1"
     ></textarea>
     <button (click)="sendMessage()" [disabled]="isLoading">Send</button>
+    <input type="file" (change)="onFileSelected($event)" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv" [disabled]="isLoading">
   </div>
 </div>

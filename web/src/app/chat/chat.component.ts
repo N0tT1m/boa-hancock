@@ -1,7 +1,7 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { FormsModule } from "@angular/forms";
 import { CommonModule, NgClass, NgFor, NgIf } from "@angular/common";
-import { ChatService, ChatMessage, ChatResponse } from "../chat.service";
+import { ChatService, ChatMessage, ChatResponse, DocumentAnalysisResult } from "../chat.service";
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { MarkdownToHtmlPipe } from "../markdown-to-html-pipe.pipe";
 
@@ -18,86 +18,62 @@ interface DisplayMessage {
   imports: [FormsModule, NgClass, NgFor, NgIf, CommonModule, MarkdownToHtmlPipe],
   providers: [ChatService]
 })
-export class ChatComponent implements OnInit, AfterViewInit {
+export class ChatComponent implements OnInit {
   @ViewChild('chatInput') chatInputElement!: ElementRef<HTMLTextAreaElement>;
 
-  messages: DisplayMessage[] = [];
+  messages: any[] = [];
   userInput = '';
   isLoading = false;
-  conversationId: string | null = null;
+  conversationId: string = '';
 
-  constructor(
-    private chatService: ChatService,
-    private sanitizer: DomSanitizer
-  ) {
-    console.log('ChatComponent constructed');
-  }
+  constructor(private chatService: ChatService) {}
 
   ngOnInit() {
-    console.log('ChatComponent initialized');
     this.messages.push({
       role: 'assistant',
-      content: 'Hello! How can I assist you today?'
+      content: 'Hello! How can I assist you today? You can ask me questions, request a web search, or upload a document for analysis.'
     });
-  }
-
-  ngAfterViewInit() {
-    this.resizeTextarea();
-  }
-
-  onKeyDown(event: KeyboardEvent) {
-    const textarea = event.target as HTMLTextAreaElement;
-    if (event.key === 'Enter') {
-      if (event.shiftKey) {
-        this.resizeTextarea();
-      } else {
-        event.preventDefault();
-        this.sendMessage();
-      }
-    } else {
-      setTimeout(() => this.resizeTextarea(), 0);
-    }
-  }
-
-  resizeTextarea() {
-    const textarea = this.chatInputElement?.nativeElement;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = textarea.scrollHeight + 'px';
-      textarea.classList.toggle('multiline', textarea.value.includes('\n'));
-    }
   }
 
   sendMessage() {
     if (this.userInput.trim() === '' || this.isLoading) return;
 
-    const userMessage: DisplayMessage = { role: 'user', content: this.userInput };
-    this.messages.push(userMessage);
     this.isLoading = true;
+    const userMessage = this.userInput;
+    this.messages.push({ role: 'user', content: userMessage });
+    this.userInput = '';
 
-    const userInputCopy = this.userInput;
-    this.userInput = ''; // Clear input immediately
-    this.resizeTextarea();
+    if (userMessage.toLowerCase().startsWith('search for ')) {
+      this.performWebSearch(userMessage.slice(11));
+    } else if (userMessage.toLowerCase().startsWith('image search ')) {
+      this.performImageSearch(userMessage.slice(13));
+    } else {
+      this.sendChatMessage(userMessage);
+    }
+  }
 
+  private sendChatMessage(message: string) {
     const chatMessage: ChatMessage = {
-      message: userInputCopy,
+      message: message,
+      conversation_id: this.conversationId
     };
 
-    if (this.conversationId) {
-      chatMessage.conversation_id = this.conversationId;
-    }
-
     this.chatService.sendMessage(chatMessage).subscribe({
-      next: (response) => {
-        this.handleResponse(response);
-      },
-      error: (error) => {
-        console.error('Error:', error);
+      next: (response: ChatResponse) => {
         this.messages.push({
           role: 'assistant',
-          content: 'Sorry, an error occurred. Please try again.'
+          content: response.message
         });
-        this.isLoading = false;
+        if (response.metadata && response.metadata.conversation_id) {
+          this.conversationId = response.metadata.conversation_id;
+        }
+      },
+      error: (error) => {
+        console.error('Error sending message:', error);
+        this.messages.push({
+          role: 'assistant',
+          content: 'An error occurred. Please try again.'
+        });
       },
       complete: () => {
         this.isLoading = false;
@@ -105,32 +81,87 @@ export class ChatComponent implements OnInit, AfterViewInit {
     });
   }
 
-  private handleResponse(response: ChatResponse) {
-    const assistantMessage: DisplayMessage = { role: 'assistant', content: response.message };
-    this.messages.push(assistantMessage);
-
-    // Always update the conversation ID
-    this.conversationId = response.metadata.conversation_id;
-
-    console.log(`Response generated in ${response.metadata.duration.toFixed(2)} seconds`);
-    console.log(`Tokens evaluated: ${response.metadata.tokens_evaluated}`);
+  onFileSelected(event: any) {
+    const file: File = event.target.files[0];
+    if (file) {
+      this.isLoading = true;
+      this.chatService.analyzeDocument(file).subscribe({
+        next: (result: DocumentAnalysisResult) => {
+          this.messages.push({
+            role: 'assistant',
+            content: `Document analysis complete for ${result.filename}`,
+            documentAnalysis: result
+          });
+        },
+        error: (error) => {
+          console.error('Document analysis error:', error);
+          this.messages.push({
+            role: 'assistant',
+            content: 'Sorry, an error occurred while analyzing the document. Please try again.'
+          });
+        },
+        complete: () => {
+          this.isLoading = false;
+        }
+      });
+    }
   }
 
-  formatMessage(content: string): SafeHtml {
-    // Replace code blocks
-    const formattedContent = content.replace(/```([\s\S]*?)```/g, (match, code) => {
-      return `<pre><code>${this.escapeHtml(code.trim())}</code></pre>`;
+  private performWebSearch(query: string) {
+    this.chatService.performSearch(query, 'web').subscribe({
+      next: (response) => {
+        if (response.results) {
+          this.messages.push({
+            role: 'web-search',
+            content: `Web search results for "${query}":`,
+            searchResults: response.results
+          });
+        } else {
+          this.messages.push({
+            role: 'assistant',
+            content: 'No web search results found.'
+          });
+        }
+      },
+      error: (error) => {
+        console.error('Web search error:', error);
+        this.messages.push({
+          role: 'assistant',
+          content: 'Sorry, an error occurred while performing the web search. Please try again.'
+        });
+      },
+      complete: () => {
+        this.isLoading = false;
+      }
     });
-    // Sanitize the HTML to prevent XSS attacks
-    return this.sanitizer.bypassSecurityTrustHtml(formattedContent);
   }
 
-  private escapeHtml(unsafe: string): string {
-    return unsafe
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+  private performImageSearch(query: string) {
+    this.chatService.performSearch(query, 'image').subscribe({
+      next: (response) => {
+        if (response.images) {
+          this.messages.push({
+            role: 'image-search',
+            content: `Image search results for "${query}":`,
+            imageResults: response.images
+          });
+        } else {
+          this.messages.push({
+            role: 'assistant',
+            content: 'No image search results found.'
+          });
+        }
+      },
+      error: (error) => {
+        console.error('Image search error:', error);
+        this.messages.push({
+          role: 'assistant',
+          content: 'Sorry, an error occurred while performing the image search. Please try again.'
+        });
+      },
+      complete: () => {
+        this.isLoading = false;
+      }
+    });
   }
 }

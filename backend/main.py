@@ -1,14 +1,15 @@
-# main.py
-
 import logging
 import sqlite3
 import uuid
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse
+from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Metadata, DocumentAnalysisResult
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request
+from search_service import perform_web_search, perform_image_search, is_search_request
+from document_analysis_service import analyze_pdf, analyze_word, analyze_spreadsheet
+import traceback
 
 # Setup logging
 logger = setup_logging()
@@ -40,7 +41,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS conversations
               timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 conn.commit()
 
-
 def get_last_conversation(limit=5):
     c.execute("""
         SELECT role, content 
@@ -55,7 +55,6 @@ def get_last_conversation(limit=5):
         LIMIT ?
     """, (limit,))
     return c.fetchall()[::-1]  # Reverse the order to get oldest to newest
-
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(chat_message: ChatMessage):
@@ -104,6 +103,54 @@ async def chat_endpoint(chat_message: ChatMessage):
             "tokens_evaluated": response.metadata.get("tokens_evaluated")
         }
     )
+
+@app.get("/api/search", response_model=SearchResponse)
+async def search_endpoint(q: str, type: str = "web"):
+    logger.info(f"Received search request: {q}, type: {type}")
+
+    try:
+        if type.lower() == "image":
+            image_results = perform_image_search(q)
+            return SearchResponse(images=image_results)
+        else:
+            search_results = perform_web_search(q)
+            return SearchResponse(results=search_results)
+    except Exception as e:
+        logger.error(f"Error performing search: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while performing the search: {str(e)}")
+
+
+@app.post("/api/analyze-document", response_model=DocumentAnalysisResult)
+async def analyze_document(file: UploadFile = File(...)):
+    content = ""
+    metadata = {}
+    excel_data = None
+
+    try:
+        file_content = await file.read()
+        file_extension = file.filename.split('.')[-1].lower()
+
+        if file_extension == 'pdf':
+            content, metadata = analyze_pdf(file_content)
+        elif file_extension in ['doc', 'docx']:
+            content, metadata = analyze_word(file_content)
+        elif file_extension in ['xls', 'xlsx', 'csv']:
+            content, metadata, excel_data = analyze_spreadsheet(file_content, file_extension)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        result = DocumentAnalysisResult(
+            filename=file.filename,
+            content=content,
+            metadata=Metadata(**metadata),
+            excel_data=excel_data
+        )
+        logger.debug(f"Analysis result: {result.dict()}")
+        return result
+    except Exception as e:
+        logger.error(f"Error analyzing document: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error analyzing document: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
