@@ -131,26 +131,31 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _conversationId;
 
   String get apiUrl {
-    return 'http://192.168.1.87:8000/api/chat';
+    return 'http://192.168.1.90:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.87:8000/api/search';
+    return 'http://192.168.1.90:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.87:8000/api/analyze-document';
+    return 'http://192.168.1.90:8000/api/analyze-document';
   }
 
   String get expenseApiUrl {
-    return 'http://192.168.1.87:8000/api/expense';
+    return 'http://192.168.1.90:8000/api/expense';
   }
 
   String get incomeApiUrl {
-    return 'http://192.168.1.87:8000/api/income';
+    return 'http://192.168.1.90:8000/api/income';
   }
+
   String get expensesApiUrl {
-    return 'http://192.168.1.87:8000/api/expenses';
+    return 'http://192.168.1.90:8000/api/expenses';
+  }
+
+  String get calendarApiUrl {
+    return 'http://192.168.1.90:8000/api/calendar';
   }
 
   @override
@@ -359,7 +364,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (text.toLowerCase().startsWith('search for ')) {
       await _performWebSearch(text.substring(11));
     } else if (text.toLowerCase().startsWith('add expense')) {
-
+      await _addExpense();
     } else {
       await _sendMessage(text);
     }
@@ -499,7 +504,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'message': text,
           'conversation_id': _conversationId
         }),
-      ).timeout(Duration(seconds: 10));
+      ).timeout(Duration(seconds: 3000));
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -573,12 +578,110 @@ class _ChatScreenState extends State<ChatScreen> {
     _sendInitialMessage();
   }
 
+  Future<void> _addCalendarEvent() async {
+    final eventName = await _showInputDialog('Enter Event Name');
+    if (eventName == null) return;
+
+    final eventDate = await _showDatePicker(context);
+    if (eventDate == null) return;
+
+    final eventTime = await _showTimePicker(context);
+    if (eventTime == null) return;
+
+    final description = await _showInputDialog('Enter Event Description');
+    if (description == null) return;
+
+    final duration = await _showInputDialog('Enter Event Duration (e.g., 1 hour, 30 minutes)');
+    if (duration == null) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$calendarApiUrl'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'name': eventName,
+          'date': eventDate.toIso8601String().split('T')[0],  // YYYY-MM-DD
+          'time': eventTime.format(context),
+          'description': description,
+          'duration': duration,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: responseData['message'],
+            isUser: false,
+          ));
+        });
+      } else {
+        final errorMessage = json.decode(response.body)['detail'];
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error adding calendar event: $e',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<String?> _showInputDialog(String title) async {
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        TextEditingController _controller = TextEditingController();
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: _controller,
+            decoration: InputDecoration(hintText: title),
+          ),
+          actions: [
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: Text('OK'),
+              onPressed: () => Navigator.of(context).pop(_controller.text),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<DateTime?> _showDatePicker(BuildContext context) {
+    return showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(Duration(days: 365)),
+    );
+  }
+
+  Future<TimeOfDay?> _showTimePicker(BuildContext context) {
+    return showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text('Ai Bitch'),
         actions: [
+          IconButton(
+            icon: Icon(Icons.event),
+            onPressed: _addCalendarEvent,
+            tooltip: 'Add Calendar Event',
+          ),
           IconButton(
             icon: Icon(Icons.attach_money),
             onPressed: _addExpense,
@@ -676,7 +779,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _textController,
                 onSubmitted: _isLoading ? null : _handleSubmitted,
-                decoration: InputDecoration.collapsed(hintText: 'Send a message or search'),
+                decoration: InputDecoration.collapsed(hintText: 'Send a message / Search for [web search] / Image search [image search]'),
               ),
             ),
             Container(

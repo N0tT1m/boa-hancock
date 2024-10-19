@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult
+from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request
@@ -12,6 +12,11 @@ from document_analysis_service import analyze_pdf, analyze_word, analyze_spreads
 from expense_service import is_expense_request, handle_expense_request
 from expense_service import ExpenseTracker
 from typing import List, Dict, Any
+from fastapi import FastAPI, HTTPException
+from state import global_state
+from pydantic import BaseModel
+from datetime import datetime, time
+from calendar_service import add_calendar_event
 import traceback
 
 expenses: List[Dict[str, Any]] = []
@@ -109,7 +114,7 @@ async def chat_endpoint(chat_message: ChatMessage):
 
     if is_calendar_request(user_input):
         response = handle_calendar_request(user_input)
-    if is_expense_request(user_input):
+    elif is_expense_request(user_input):
         response = handle_expense_request(user_input)
     else:
         response = await process_chat_request(user_input, conversation_history, ollama_client)
@@ -124,7 +129,8 @@ async def chat_endpoint(chat_message: ChatMessage):
         metadata={
             "conversation_id": conversation_id,
             "duration": response.metadata.get("duration"),
-            "tokens_evaluated": response.metadata.get("tokens_evaluated")
+            "tokens_evaluated": response.metadata.get("tokens_evaluated"),
+            "event_creation_stage": global_state.event_creation_stage if is_calendar_request(user_input) else None
         }
     )
 
@@ -179,9 +185,9 @@ async def analyze_document(file: UploadFile = File(...)):
 @app.post("/api/expense", response_model=dict)
 async def add_expense(expense: Expense):
     try:
-        c.execute("INSERT INTO expenses (amount, category, description, date) VALUES (?, ?, ?, ?)",
+        c2.execute("INSERT INTO expenses (amount, category, description, date) VALUES (?, ?, ?, ?)",
                   (expense.amount, expense.category, expense.description, expense.date))
-        conn.commit()
+        conn2.commit()
         return {"message": "Expense added successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding expense: {str(e)}")
@@ -189,9 +195,9 @@ async def add_expense(expense: Expense):
 @app.post("/api/income", response_model=dict)
 async def add_income(income: Income):
     try:
-        c.execute("INSERT INTO income (amount, source, date) VALUES (?, ?, ?)",
+        c2.execute("INSERT INTO income (amount, source, date) VALUES (?, ?, ?)",
                   (income.amount, income.source, income.date))
-        conn.commit()
+        conn2.commit()
         return {"message": "Income added successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding income: {str(e)}")
@@ -199,8 +205,8 @@ async def add_income(income: Income):
 @app.get("/api/expenses", response_model=list)
 async def get_expenses():
     try:
-        c.execute("SELECT * FROM expenses")
-        expenses = c.fetchall()
+        c2.execute("SELECT * FROM expenses")
+        expenses = c2.fetchall()
         return [{"id": e[0], "amount": e[1], "category": e[2],
                  "description": e[3], "date": e[4]} for e in expenses]
     except Exception as e:
@@ -209,14 +215,20 @@ async def get_expenses():
 @app.get("/api/income", response_model=list)
 async def get_income():
     try:
-        c.execute("SELECT * FROM income")
-        income_entries = c.fetchall()
+        c2.execute("SELECT * FROM income")
+        income_entries = c2.fetchall()
         return [{"id": i[0], "amount": i[1], "source": i[2], "date": i[3]} for i in income_entries]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving income: {str(e)}")
+
+
+# In your main FastAPI app file (main.py), update the endpoint:
+@app.post("/api/calendar", response_model=ChatResponse)
+async def add_calendar_event(event: CalendarEvent):
+    return handle_calendar_request(event)
 
 if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server")
-    uvicorn.run(app, host="192.168.1.87", port=8000)
+    uvicorn.run(app, host="192.168.1.90", port=8000)

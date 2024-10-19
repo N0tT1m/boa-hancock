@@ -59,3 +59,14 @@ class Income(BaseModel):
     amount: float
     source: str
     date: str = datetime.now().strftime("%Y-%m-%d")
+
+class CalendarEvent(BaseModel):
+    name: str
+    date: str
+    time: str
+    description: str
+    duration: str = "1 hour"  # Default to 1 hour if not provided
+
+class CalendarEventRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None

@@ -8,6 +8,8 @@ from models import ChatResponse
 from utils import parse_date_time
 from state import global_state
 from datetime import timedelta
+from models import CalendarEventRequest, CalendarEvent
+from fastapi import FastAPI, HTTPException
 
 logger = logging.getLogger(__name__)
 creds = None
@@ -140,12 +142,142 @@ print(generate_calendar_response(event_title, date_time, duration))
 def is_calendar_request(message):
     return any(phrase in message.lower() for phrase in ['add calendar event', 'add a calendar reminder'])
 
-def add_calendar_event(summary, start_time, end_time, time_zone):
-    logger.info(f"Attempting to add calendar event: {summary}")
+# def add_calendar_event(summary, start_time, end_time, time_zone):
+#     logger.info(f"Attempting to add calendar event: {summary}")
+#     service = get_calendar_service()
+#
+#     event = {
+#         'summary': summary,
+#         'start': {
+#             'dateTime': start_time.isoformat(),
+#             'timeZone': time_zone,
+#         },
+#         'end': {
+#             'dateTime': end_time.isoformat(),
+#             'timeZone': time_zone,
+#         },
+#     }
+#     try:
+#         event = service.events().insert(calendarId='primary', body=event).execute()
+#         logger.info(f"Event created successfully: {event.get('htmlLink')}")
+#         return f"Event created: {event.get('htmlLink')}"
+#     except Exception as e:
+#         logger.error(f"Error creating calendar event: {str(e)}")
+#         raise
+
+
+# def handle_calendar_request(user_input):
+#     if global_state.event_creation_stage is None:
+#         global_state.event_creation_stage = 'title'
+#         global_state.calendar_event_info = {}
+#         return ChatResponse(
+#             message="Sure, I can help you add a calendar event. What's the title of the event?",
+#             metadata={}
+#         )
+#
+#     if global_state.event_creation_stage == 'title':
+#         global_state.calendar_event_info['summary'] = user_input
+#         global_state.event_creation_stage = 'date_time'
+#         return ChatResponse(
+#             message="Great! Now, when is this event? Please provide the date and time.",
+#             metadata={}
+#         )
+#
+#     if global_state.event_creation_stage == 'date_time':
+#         date_time, time_zone = parse_date_time(user_input)
+#         if date_time is None:
+#             return ChatResponse(
+#                 message="I couldn't understand that date and time. Can you please provide it in a format like '10/24/24 10:00am EST' or '10 am est on October 24, 2024'?",
+#                 metadata={}
+#             )
+#         return ChatResponse(
+#             message="Got it. How long will the event last? (e.g., '1 hour', '30 minutes')",
+#             metadata={}
+#         )
+#
+#     if global_state.event_creation_stage == 'duration':
+#         try:
+#             duration = parse_duration(user_input)
+#             start_time = global_state.calendar_event_info['date_time']
+#             end_time = start_time + duration
+#             result = add_calendar_event(
+#                 global_state.calendar_event_info['summary'],
+#                 start_time,
+#                 end_time,
+#                 global_state.calendar_event_info['time_zone']
+#             )
+#             logger.info("Calendar event added successfully")
+#
+#             # Format the response
+#             event_title = global_state.calendar_event_info['summary']
+#             date_time = start_time.strftime("%B %d, %Y, %I:%M %p %Z")
+#             duration_str = f"{duration.total_seconds() // 3600} hours" if duration.total_seconds() >= 3600 else f"{duration.total_seconds() // 60} minutes"
+#
+#             response_message = generate_calendar_response(event_title, date_time, duration_str)
+#
+#             global_state.calendar_event_info = {}  # Clear the info after successful addition
+#             global_state.event_creation_stage = None  # Reset the stage
+#
+#             return ChatResponse(
+#                 message=response_message,
+#                 metadata={}
+#             )
+#         except Exception as e:
+#             logger.error(f"Failed to add calendar event: {str(e)}")
+#             global_state.calendar_event_info = {}  # Clear the info if there's an error
+#             global_state.event_creation_stage = None  # Reset the stage
+#             return ChatResponse(
+#                 message=f"I'm sorry, but I couldn't add the calendar event. {str(e)}",
+#                 metadata={}
+#             )
+
+
+def handle_calendar_request(event: CalendarEvent) -> ChatResponse:
+    try:
+        # Parse the date and time
+        date_time, time_zone = parse_date_time(f"{event.date} {event.time}")
+        if date_time is None:
+            raise ValueError("Invalid date and time format")
+
+        # Parse the duration
+        duration = parse_duration(event.duration)
+
+        # Calculate end time
+        end_time = date_time + duration
+
+        # Add the event to the calendar
+        result = add_calendar_event(
+            event.name,
+            date_time,
+            end_time,
+            time_zone,
+            event.description
+        )
+        logger.info("Calendar event added successfully")
+
+        # Format the response
+        date_time_str = date_time.strftime("%B %d, %Y, %I:%M %p %Z")
+        duration_str = f"{duration.total_seconds() // 3600} hours" if duration.total_seconds() >= 3600 else f"{duration.total_seconds() // 60} minutes"
+
+        response_message = generate_calendar_response(event.name, date_time_str, duration_str)
+
+        return ChatResponse(
+            message=response_message,
+            metadata={"event_id": result}
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to add calendar event: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to add calendar event: {str(e)}")
+
+# Make sure to update the add_calendar_event function signature if needed
+def add_calendar_event(summary, start_time, end_time, time_zone, description):
+    # Implementation remains the same, just add the description to the event
     service = get_calendar_service()
 
     event = {
         'summary': summary,
+        'description': description,
         'start': {
             'dateTime': start_time.isoformat(),
             'timeZone': time_zone,
@@ -155,6 +287,7 @@ def add_calendar_event(summary, start_time, end_time, time_zone):
             'timeZone': time_zone,
         },
     }
+
     try:
         event = service.events().insert(calendarId='primary', body=event).execute()
         logger.info(f"Event created successfully: {event.get('htmlLink')}")
@@ -162,72 +295,6 @@ def add_calendar_event(summary, start_time, end_time, time_zone):
     except Exception as e:
         logger.error(f"Error creating calendar event: {str(e)}")
         raise
-
-
-def handle_calendar_request(user_input):
-    if global_state.event_creation_stage is None:
-        global_state.event_creation_stage = 'title'
-        global_state.calendar_event_info = {}
-        return ChatResponse(
-            message="Sure, I can help you add a calendar event. What's the title of the event?",
-            metadata={}
-        )
-
-    if global_state.event_creation_stage == 'title':
-        global_state.calendar_event_info['summary'] = user_input
-        global_state.event_creation_stage = 'date_time'
-        return ChatResponse(
-            message="Great! Now, when is this event? Please provide the date and time.",
-            metadata={}
-        )
-
-    if global_state.event_creation_stage == 'date_time':
-        date_time, time_zone = parse_date_time(user_input)
-        if date_time is None:
-            return ChatResponse(
-                message="I couldn't understand that date and time. Can you please provide it in a format like '10/24/24 10:00am EST' or '10 am est on October 24, 2024'?",
-                metadata={}
-            )
-        return ChatResponse(
-            message="Got it. How long will the event last? (e.g., '1 hour', '30 minutes')",
-            metadata={}
-        )
-
-    if global_state.event_creation_stage == 'duration':
-        try:
-            duration = parse_duration(user_input)
-            start_time = global_state.calendar_event_info['date_time']
-            end_time = start_time + duration
-            result = add_calendar_event(
-                global_state.calendar_event_info['summary'],
-                start_time,
-                end_time,
-                global_state.calendar_event_info['time_zone']
-            )
-            logger.info("Calendar event added successfully")
-
-            # Format the response
-            event_title = global_state.calendar_event_info['summary']
-            date_time = start_time.strftime("%B %d, %Y, %I:%M %p %Z")
-            duration_str = f"{duration.total_seconds() // 3600} hours" if duration.total_seconds() >= 3600 else f"{duration.total_seconds() // 60} minutes"
-
-            response_message = generate_calendar_response(event_title, date_time, duration_str)
-
-            global_state.calendar_event_info = {}  # Clear the info after successful addition
-            global_state.event_creation_stage = None  # Reset the stage
-
-            return ChatResponse(
-                message=response_message,
-                metadata={}
-            )
-        except Exception as e:
-            logger.error(f"Failed to add calendar event: {str(e)}")
-            global_state.calendar_event_info = {}  # Clear the info if there's an error
-            global_state.event_creation_stage = None  # Reset the stage
-            return ChatResponse(
-                message=f"I'm sorry, but I couldn't add the calendar event. {str(e)}",
-                metadata={}
-            )
 
 def get_calendar_service():
     global creds
