@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
+import 'package:markdown/markdown.dart' as md;
 
 // Update the ImageSearchResult class
 class ImageSearchResult {
@@ -131,19 +133,19 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _conversationId;
 
   String get apiUrl {
-    return 'http://192.168.1.90:8000/api/chat';
+    return 'http://192.168.1.71:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.90:8000/api/search';
+    return 'http://192.168.1.71:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.90:8000/api/analyze-document';
+    return 'http://192.168.1.71:8000/api/analyze-document';
   }
 
   String get expenseApiUrl {
-    return 'http://192.168.1.90:8000/api/expense';
+    return 'http://192.168.1.71:8000/api/expense';
   }
 
   String get incomeApiUrl {
@@ -963,19 +965,19 @@ class ChatMessage extends Message {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: EdgeInsets.symmetric(vertical: 10.0),
+      margin: const EdgeInsets.symmetric(vertical: 10.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
           if (!isUser)
             Container(
-              margin: EdgeInsets.only(right: 16.0),
-              child: CircleAvatar(child: Text('Ai')),
+              margin: const EdgeInsets.only(right: 16.0),
+              child: const CircleAvatar(child: Text('Ai')),
             ),
           Flexible(
             child: Container(
-              padding: EdgeInsets.all(12.0),
+              padding: const EdgeInsets.all(12.0),
               decoration: BoxDecoration(
                 color: isUser ? Colors.blue[100] : Colors.grey[200],
                 borderRadius: BorderRadius.circular(20.0),
@@ -985,39 +987,113 @@ class ChatMessage extends Message {
                 children: [
                   Text(
                     isUser ? 'Daddy' : 'Ai Whore',
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       color: Colors.black87,
                     ),
                   ),
-                  SizedBox(height: 5.0),
-                  isUser
-                      ? Text(
-                    text,
-                    style: TextStyle(color: Colors.black87),
-                  )
-                      : MarkdownBody(
-                    data: text,
-                    selectable: true,
-                    styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(fontSize: 16, color: Colors.black87),
-                      code: TextStyle(
-                        backgroundColor: Colors.grey[300],
-                        fontFamily: 'Courier',
-                        fontSize: 14,
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 5.0),
+                  _buildMessageContent(context),
                 ],
               ),
             ),
           ),
           if (isUser)
             Container(
-              margin: EdgeInsets.only(left: 16.0),
-              child: CircleAvatar(child: Text('D')),
+              margin: const EdgeInsets.only(left: 16.0),
+              child: const CircleAvatar(child: Text('D')),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageContent(BuildContext context) {
+    if (isUser) {
+      return Text(
+        text,
+        style: const TextStyle(color: Colors.black87),
+      );
+    } else {
+      return MarkdownBody(
+        data: text,
+        selectable: true,
+        styleSheet: MarkdownStyleSheet(
+          p: const TextStyle(fontSize: 16, color: Colors.black87),
+          code: TextStyle(
+            backgroundColor: Colors.grey[300],
+            fontFamily: 'Courier',
+            fontSize: 14,
+            color: Colors.black87,
+          ),
+        ),
+        builders: {
+          'code': CodeBlockBuilder(context),
+        },
+      );
+    }
+  }
+}
+
+class CodeBlockBuilder extends MarkdownElementBuilder {
+  final BuildContext context;
+
+  CodeBlockBuilder(this.context);
+
+  @override
+  Widget visitElementAfter(md.Element element, TextStyle? preferredStyle) {
+    String code = element.textContent;
+    String language = element.attributes['class']?.split('-').last ?? '';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (language.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(8.0)),
+              ),
+              child: Text(
+                language,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  code,
+                  style: const TextStyle(
+                    fontFamily: 'Courier',
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 8.0,
+                right: 8.0,
+                child: IconButton(
+                  icon: const Icon(Icons.copy),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: code));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Code copied to clipboard')),
+                    );
+                  },
+                  tooltip: 'Copy code',
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

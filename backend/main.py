@@ -231,4 +231,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server")
-    uvicorn.run(app, host="192.168.1.90", port=8000)
+    uvicorn.run(app, host="192.168.1.71", port=8000)
