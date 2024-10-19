@@ -29,7 +29,7 @@ async def process_chat_request(user_input, conversation_history, ollama_client):
 
         try:
             logger.debug("Sending chat request to Ollama")
-            response = ollama_client.chat(model='llama3.2', messages=formatted_conversation)
+            response = ollama_client.chat(model='llama3.1:70b', messages=formatted_conversation)
             ai_response = process_response(response)
             logger.info("Received response from Ollama")
 
