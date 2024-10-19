@@ -9,6 +9,7 @@ from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request
 from search_service import perform_web_search, perform_image_search, is_search_request
 from document_analysis_service import analyze_pdf, analyze_word, analyze_spreadsheet
+from expense_service import is_expense_request, handle_expense_request
 from expense_service import ExpenseTracker
 from typing import List, Dict, Any
 import traceback
@@ -108,6 +109,8 @@ async def chat_endpoint(chat_message: ChatMessage):
 
     if is_calendar_request(user_input):
         response = handle_calendar_request(user_input)
+    if is_expense_request(user_input):
+        response = handle_expense_request(user_input)
     else:
         response = await process_chat_request(user_input, conversation_history, ollama_client)
 
@@ -216,4 +219,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server")
-    uvicorn.run(app, host="192.168.1.90", port=8000)
+    uvicorn.run(app, host="192.168.1.87", port=8000)

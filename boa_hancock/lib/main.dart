@@ -131,15 +131,26 @@ class _ChatScreenState extends State<ChatScreen> {
   late String _conversationId;
 
   String get apiUrl {
-    return 'http://192.168.1.90:8000/api/chat';
+    return 'http://192.168.1.87:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.90:8000/api/search';
+    return 'http://192.168.1.87:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.90:8000/api/analyze-document';
+    return 'http://192.168.1.87:8000/api/analyze-document';
+  }
+
+  String get expenseApiUrl {
+    return 'http://192.168.1.87:8000/api/expense';
+  }
+
+  String get incomeApiUrl {
+    return 'http://192.168.1.87:8000/api/income';
+  }
+  String get expensesApiUrl {
+    return 'http://192.168.1.87:8000/api/expenses';
   }
 
   @override
@@ -173,6 +184,164 @@ class _ChatScreenState extends State<ChatScreen> {
     _saveConversation();
   }
 
+  Future<void> _addExpense() async {
+    final amount = await _showExpenseDialog('Enter Expense Amount');
+    if (amount == null) return;
+
+    final category = await _showExpenseDialog('Enter Expense Category');
+    if (category == null) return;
+
+    final description = await _showExpenseDialog('Enter Expense Description');
+    if (description == null) return;
+
+    final date = DateTime.now().toIso8601String();
+
+    try {
+      final response = await http.post(
+        Uri.parse(expenseApiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'amount': amount,
+          'category': category,
+          'description': description,
+          'date': date,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Expense added successfully!',
+            isUser: false,
+          ));
+        });
+      } else {
+        throw Exception('Failed to add expense');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error adding expense: $e',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<void> _addIncome() async {
+    final amount = await _showExpenseDialog('Enter Income Amount');
+    if (amount == null) return;
+
+    final source = await _showExpenseDialog('Enter Income Source');
+    if (source == null) return;
+
+    final date = DateTime.now().toIso8601String();
+
+    try {
+      final response = await http.post(
+        Uri.parse(incomeApiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'amount': amount,
+          'source': source,
+          'date': date,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Income added successfully!',
+            isUser: false,
+          ));
+        });
+      } else {
+        throw Exception('Failed to add income');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error adding income: $e',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<void> _getExpenses() async {
+    try {
+      final response = await http.get(Uri.parse(expensesApiUrl));
+      if (response.statusCode == 200) {
+        final expenses = json.decode(response.body) as List<dynamic>;
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Expenses:\n${expenses.map((e) => '- \$${e['amount']} (${e['category']})').join('\n')}',
+            isUser: false,
+          ));
+        });
+      } else {
+        throw Exception('Failed to retrieve expenses');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error retrieving expenses: $e',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<void> _getIncome() async {
+    try {
+      final response = await http.get(Uri.parse(incomeApiUrl));
+      if (response.statusCode == 200) {
+        final income = json.decode(response.body) as List<dynamic>;
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Income:\n${income.map((i) => '- \$${i['amount']} (${i['source']})').join('\n')}',
+            isUser: false,
+          ));
+        });
+      } else {
+        throw Exception('Failed to retrieve income');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error retrieving income: $e',
+          isUser: false,
+        ));
+      });
+    }
+  }
+
+  Future<String?> _showExpenseDialog(String title) async {
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        TextEditingController _controller = TextEditingController();
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: _controller,
+            decoration: InputDecoration(hintText: title),
+          ),
+          actions: [
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: Text('OK'),
+              onPressed: () => Navigator.of(context).pop(_controller.text),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // Update the _handleSubmitted method
   void _handleSubmitted(String text) async {
     _textController.clear();
@@ -189,6 +358,8 @@ class _ChatScreenState extends State<ChatScreen> {
       await _performImageSearch(text.substring(13));
     } else if (text.toLowerCase().startsWith('search for ')) {
       await _performWebSearch(text.substring(11));
+    } else if (text.toLowerCase().startsWith('add expense')) {
+
     } else {
       await _sendMessage(text);
     }
@@ -409,14 +580,24 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text('Ai Bitch'),
         actions: [
           IconButton(
-            icon: Icon(Icons.history),
-            onPressed: _loadPreviousConversation,
-            tooltip: 'Load Previous Conversation',
+            icon: Icon(Icons.attach_money),
+            onPressed: _addExpense,
+            tooltip: 'Add Expense',
           ),
           IconButton(
-            icon: Icon(Icons.delete_outline),
-            onPressed: _clearConversation,
-            tooltip: 'Clear Conversation',
+            icon: Icon(Icons.monetization_on),
+            onPressed: _addIncome,
+            tooltip: 'Add Income',
+          ),
+          IconButton(
+            icon: Icon(Icons.list),
+            onPressed: _getExpenses,
+            tooltip: 'View Expenses',
+          ),
+          IconButton(
+            icon: Icon(Icons.money),
+            onPressed: _getIncome,
+            tooltip: 'View Income',
           ),
         ],
       ),
@@ -844,7 +1025,7 @@ class SearchInfoMessage extends Message {
       ),
       child: Text(
         'Found $resultCount results',
-        style: Theme.of(context).textTheme.subtitle2,
+        // style: Theme.of(context).textTheme.subtitle2,
       ),
     );
   }

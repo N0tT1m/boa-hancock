@@ -69,6 +69,66 @@ Lasting for: {duration}
 
 # Placeholder text (you can replace this with whatever you'd like)
 placeholder_text = "*insert random text here i will fill it in*"
+def generate_calendar_response(event_title, date_time, duration):
+    responses = [
+        f"""Great news! Your calendar event has been successfully added:
+
+**Event Title**: {event_title}
+**Date and Time:** {date_time}
+**Duration**: {duration}
+
+{placeholder_text}""",
+
+        f"""Excellent! I've scheduled the event for you. Here are the details:
+
+📅 {event_title}
+🕒 {date_time}
+⏱️ Duration: {duration}
+
+{placeholder_text}""",
+
+        f"""Your new calendar event is all set! Here's a summary:
+
+• Title: {event_title}
+• Scheduled for: {date_time}
+• Event length: {duration}
+
+{placeholder_text}""",
+
+        f"""Calendar updated! I've added the following event:
+
+🎉 {event_title} 🎉
+When: {date_time}
+How long: {duration}
+
+{placeholder_text}""",
+
+        f"""Success! Your event has been added to your calendar:
+
+Event: {event_title}
+Time & Date: {date_time}
+Duration: {duration}
+
+{placeholder_text}""",
+
+        f"""All done! Here's what I've added to your calendar:
+
+"{event_title}"
+Happening on: {date_time}
+Lasting for: {duration}
+
+{placeholder_text}"""
+    ]
+
+    return random.choice(responses)
+
+# Placeholder text (you can replace this with whatever you'd like)
+placeholder_text = "*insert random text here i will fill it in*"
+
+# Example usage
+event_title = "Flexing (4 hours - this is the time for the whole event)"
+date_time = "October 18, 2024, 4:00 PM EST"
+duration = "4 hours"
 
 # Example usage
 event_title = "Flexing (4 hours - this is the time for the whole event)"
@@ -128,9 +188,6 @@ def handle_calendar_request(user_input):
                 message="I couldn't understand that date and time. Can you please provide it in a format like '10/24/24 10:00am EST' or '10 am est on October 24, 2024'?",
                 metadata={}
             )
-        global_state.calendar_event_info['date_time'] = date_time
-        global_state.calendar_event_info['time_zone'] = time_zone
-        global_state.event_creation_stage = 'duration'
         return ChatResponse(
             message="Got it. How long will the event last? (e.g., '1 hour', '30 minutes')",
             metadata={}
