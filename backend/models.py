@@ -70,3 +70,15 @@ class CalendarEvent(BaseModel):
 class CalendarEventRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+
+class SourceCodeAnalysisRequest(BaseModel):
+    code: str
+    filename: str
+
+class SourceCodeAnalysisResponse(BaseModel):
+    filename: str
+    language: str
+    summary: str
+    complexity: str
+    suggestions: List[str]
+    code: str

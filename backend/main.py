@@ -1,9 +1,10 @@
+import ast
 import logging
 import sqlite3
 import uuid
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest
+from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request
@@ -150,6 +151,63 @@ async def search_endpoint(q: str, type: str = "web"):
         raise HTTPException(status_code=500, detail=f"An error occurred while performing the search: {str(e)}")
 
 
+# Add this new function for source code analysis
+def analyze_source_code(code: str, filename: str) -> SourceCodeAnalysisResponse:
+    try:
+        # Parse the code
+        tree = ast.parse(code)
+
+        # Analyze complexity
+        complexity = ast.walk(tree)
+        complexity_score = sum(1 for _ in complexity)
+
+        if complexity_score < 50:
+            complexity_rating = "Low"
+        elif complexity_score < 100:
+            complexity_rating = "Medium"
+        else:
+            complexity_rating = "High"
+
+        # Generate summary
+        summary = f"This code contains {len(tree.body)} top-level statements."
+
+        # Generate suggestions
+        suggestions = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                if len(node.body) > 20:
+                    suggestions.append(f"Consider breaking down the function '{node.name}' into smaller functions.")
+            elif isinstance(node, ast.For) or isinstance(node, ast.While):
+                suggestions.append("Make sure to handle potential infinite loops.")
+
+        if not suggestions:
+            suggestions.append("No specific suggestions. The code looks good!")
+
+        # Determine language (in this case, we're assuming Python)
+        language = "Python"
+
+        return SourceCodeAnalysisResponse(
+            filename=filename,
+            language=language,
+            summary=summary,
+            complexity=complexity_rating,
+            suggestions=suggestions,
+            code=code
+        )
+    except SyntaxError as e:
+        return SourceCodeAnalysisResponse(
+            filename=filename,
+            language="Unknown",
+            summary="Unable to analyze: Syntax error in the code.",
+            complexity="N/A",
+            suggestions=["Fix the syntax error: " + str(e)],
+            code=code
+        )
+    except Exception as e:
+        logger.error(f"Error analyzing source code: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error analyzing source code: {str(e)}")
+
+# Update the existing analyze_document endpoint to use the LLM for text files
 @app.post("/api/analyze-document", response_model=DocumentAnalysisResult)
 async def analyze_document(file: UploadFile = File(...)):
     content = ""
@@ -166,6 +224,16 @@ async def analyze_document(file: UploadFile = File(...)):
             content, metadata = analyze_word(file_content)
         elif file_extension in ['xls', 'xlsx', 'csv']:
             content, metadata, excel_data = analyze_spreadsheet(file_content, file_extension)
+        elif file_extension in ['txt', 'py', 'js', 'java', 'cpp', 'cs', 'go', 'rb', 'php', 'swift', 'kt']:
+            # For text-based files, treat them as source code and use the LLM
+            analysis_result = await analyze_source_code_with_llm(file_content.decode('utf-8'), file.filename, ollama_client)
+            content = analysis_result.code
+            metadata = {
+                "language": analysis_result.language,
+                "summary": analysis_result.summary,
+                "complexity": analysis_result.complexity,
+                "suggestions": analysis_result.suggestions
+            }
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -221,6 +289,81 @@ async def get_income():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving income: {str(e)}")
 
+async def analyze_source_code_with_llm(code: str, filename: str, ollama_client) -> SourceCodeAnalysisResponse:
+    try:
+        # Prepare the prompt for the LLM
+        prompt = f"""Analyze the following source code and provide:
+1. The programming language
+2. A brief summary of what the code does
+3. An assessment of its complexity (Low, Medium, or High)
+4. 2-3 suggestions for improvement or best practices
+5. Any potential security concerns
+
+Here's the code:
+
+```
+{code}
+```
+
+Please format your response as follows:
+Language: [language name]
+Summary: [brief summary]
+Complexity: [Low/Medium/High]
+Suggestions:
+- [suggestion 1]
+- [suggestion 2]
+- [suggestion 3 (if applicable)]
+Security Concerns: [list any security concerns or "None identified" if none]
+"""
+
+        # Create a mock conversation history with the prompt as the user's message
+        conversation_history = [
+            {'role': 'user', 'content': prompt}
+        ]
+
+        # Send the prompt to the LLM
+        response = await process_chat_request(prompt, conversation_history, ollama_client)
+
+        # Parse the LLM's response
+        lines = response.message.split('\n')
+        language = next((line.split(': ')[1] for line in lines if line.startswith('Language:')), 'Unknown')
+        summary = next((line.split(': ')[1] for line in lines if line.startswith('Summary:')), 'No summary provided')
+        complexity = next((line.split(': ')[1] for line in lines if line.startswith('Complexity:')), 'Unknown')
+        suggestions = [line.strip('- ') for line in lines if line.startswith('-')]
+        security_concerns = next((line.split(': ')[1] for line in lines if line.startswith('Security Concerns:')), 'None identified')
+
+        return SourceCodeAnalysisResponse(
+            filename=filename,
+            language=language,
+            summary=summary,
+            complexity=complexity,
+            suggestions=suggestions + ([security_concerns] if security_concerns != "None identified" else []),
+            code=code
+        )
+    except Exception as e:
+        logger.error(f"Error analyzing source code with LLM: {str(e)}")
+        logger.error(traceback.format_exc())
+        return SourceCodeAnalysisResponse(
+            filename=filename,
+            language="Unknown",
+            summary="Error occurred during analysis",
+            complexity="Unknown",
+            suggestions=["An error occurred during the analysis. Please try again."],
+            code=code
+        )
+
+@app.post("/api/analyze-document/source", response_model=SourceCodeAnalysisResponse)
+async def analyze_source_code_endpoint(request: SourceCodeAnalysisRequest):
+    try:
+        result = await analyze_source_code_with_llm(request.code, request.filename, ollama_client)
+        return result
+    except Exception as e:
+        logger.error(f"Error in analyze_source_code_endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error analyzing source code: {str(e)}")
+
+
+# Update the existing analyze_document endpoint to handle text files
 
 # In your main FastAPI app file (main.py), update the endpoint:
 @app.post("/api/calendar", response_model=ChatResponse)
@@ -231,4 +374,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting Uvicorn server")
-    uvicorn.run(app, host="192.168.1.71", port=8000)
+    uvicorn.run(app, host="192.168.1.87", port=8000)

@@ -131,33 +131,34 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   bool _isLoading = false;
   late String _conversationId;
+  final FocusNode _focusNode = FocusNode();
 
   String get apiUrl {
-    return 'http://192.168.1.71:8000/api/chat';
+    return 'http://192.168.1.87:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.71:8000/api/search';
+    return 'http://192.168.1.87:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.71:8000/api/analyze-document';
+    return 'http://192.168.1.87:8000/api/analyze-document';
   }
 
   String get expenseApiUrl {
-    return 'http://192.168.1.71:8000/api/expense';
+    return 'http://192.168.1.87:8000/api/expense';
   }
 
   String get incomeApiUrl {
-    return 'http://192.168.1.90:8000/api/income';
+    return 'http://192.168.1.87:8000/api/income';
   }
 
   String get expensesApiUrl {
-    return 'http://192.168.1.90:8000/api/expenses';
+    return 'http://192.168.1.87:8000/api/expenses';
   }
 
   String get calendarApiUrl {
-    return 'http://192.168.1.90:8000/api/calendar';
+    return 'http://192.168.1.87:8000/api/calendar';
   }
 
   @override
@@ -189,6 +190,120 @@ class _ChatScreenState extends State<ChatScreen> {
       ));
     });
     _saveConversation();
+  }
+
+  // Add these methods to your _ChatScreenState class
+
+  Future<void> _uploadAndAnalyzeSourceCode() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['py', 'js', 'java', 'cpp', 'cs', 'go', 'rb', 'php', 'swift', 'kt'],
+    );
+
+    if (result != null) {
+      PlatformFile file = result.files.first;
+      Uint8List? fileBytes = file.bytes;
+
+      if (fileBytes != null) {
+        String code = utf8.decode(fileBytes);
+        await _analyzeSourceCode(code, file.name);
+      } else {
+        setState(() {
+          _messages.insert(0, ChatMessage(
+            text: 'Error: Unable to read file content.',
+            isUser: false,
+          ));
+        });
+      }
+    }
+  }
+
+  Future<void> _pasteAndAnalyzeSourceCode() async {
+    final code = await _showCodeInputDialog();
+    if (code != null && code.isNotEmpty) {
+      await _analyzeSourceCode(code, 'Pasted Code');
+    }
+  }
+
+  Future<void> _analyzeSourceCode(String code, String filename) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      String prompt = '''Analyze the following source code and provide:
+1. The programming language
+2. A brief summary of what the code does
+3. An assessment of its complexity (Low, Medium, or High)
+4. 2-3 suggestions for improvement or best practices
+5. Any potential security concerns
+
+Here's the code:
+
+```
+$code
+```
+
+Please format your response as follows:
+Language: [language name]
+Summary: [brief summary]
+Complexity: [Low/Medium/High]
+Suggestions:
+- [suggestion 1]
+- [suggestion 2]
+- [suggestion 3 (if applicable)]
+Security Concerns: [list any security concerns or "None identified" if none]''';
+
+      await _sendMessage(prompt);
+
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: "Source code from $filename has been analyzed. The results are in the above message.",
+          isUser: false,
+        ));
+      });
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error analyzing source code: ${e.toString()}',
+          isUser: false,
+        ));
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<String?> _showCodeInputDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        String code = '';
+        return AlertDialog(
+          title: Text('Paste Your Code'),
+          content: TextField(
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            decoration: InputDecoration(hintText: 'Paste your code here'),
+            onChanged: (value) {
+              code = value;
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: Text('Analyze'),
+              onPressed: () => Navigator.of(context).pop(code),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _addExpense() async {
@@ -349,9 +464,44 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // Update the _handleSubmitted method
-  void _handleSubmitted(String text) async {
+  Widget _buildTextComposer() {
+    return IconTheme(
+      data: IconThemeData(color: Theme.of(context).colorScheme.secondary),
+      child: Container(
+        margin: EdgeInsets.symmetric(horizontal: 8.0),
+        child: Row(
+          children: [
+            Flexible(
+              child: TextField(
+                controller: _textController,
+                focusNode: _focusNode,
+                onSubmitted: _isLoading ? null : _handleSubmitted,
+                decoration: InputDecoration.collapsed(
+                  hintText: 'Send a message or search',
+                ),
+                keyboardType: TextInputType.multiline,
+                maxLines: null,
+                textInputAction: TextInputAction.newline,
+              ),
+            ),
+            Container(
+              margin: EdgeInsets.symmetric(horizontal: 4.0),
+              child: IconButton(
+                icon: Icon(Icons.send),
+                onPressed: _isLoading
+                    ? null
+                    : () => _handleSubmitted(_textController.text),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleSubmitted(String text) {
     _textController.clear();
+    _focusNode.requestFocus();
     setState(() {
       _messages.insert(0, ChatMessage(
         text: text,
@@ -361,20 +511,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _saveConversation();
 
+    // Process the submitted text
     if (text.toLowerCase().startsWith('image search ')) {
-      await _performImageSearch(text.substring(13));
+      _performImageSearch(text.substring(13));
     } else if (text.toLowerCase().startsWith('search for ')) {
-      await _performWebSearch(text.substring(11));
-    } else if (text.toLowerCase().startsWith('add expense')) {
-      await _addExpense();
+      _performWebSearch(text.substring(11));
     } else {
-      await _sendMessage(text);
+      _sendMessage(text);
     }
-
-    setState(() {
-      _isLoading = false;
-    });
-    _saveConversation();
   }
 
   Future<void> _uploadAndAnalyzeDocument() async {
@@ -759,42 +903,29 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // Update the _buildFilePickerButton method
   Widget _buildFilePickerButton() {
     return Container(
       margin: EdgeInsets.symmetric(vertical: 8.0),
-      child: ElevatedButton.icon(
-        onPressed: _uploadAndAnalyzeDocument,
-        icon: Icon(Icons.attach_file),
-        label: Text('Select File'),
-      ),
-    );
-  }
-
-  Widget _buildTextComposer() {
-    return IconTheme(
-      data: IconThemeData(color: Theme.of(context).colorScheme.secondary),
-      child: Container(
-        margin: EdgeInsets.symmetric(horizontal: 8.0),
-        child: Row(
-          children: [
-            Flexible(
-              child: TextField(
-                controller: _textController,
-                onSubmitted: _isLoading ? null : _handleSubmitted,
-                decoration: InputDecoration.collapsed(hintText: 'Send a message / Search for [web search] / Image search [image search]'),
-              ),
-            ),
-            Container(
-              margin: EdgeInsets.symmetric(horizontal: 4.0),
-              child: IconButton(
-                icon: Icon(Icons.send),
-                onPressed: _isLoading
-                    ? null
-                    : () => _handleSubmitted(_textController.text),
-              ),
-            ),
-          ],
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          ElevatedButton.icon(
+            onPressed: _uploadAndAnalyzeDocument,
+            icon: Icon(Icons.attach_file),
+            label: Text('Analyze Document'),
+          ),
+          ElevatedButton.icon(
+            onPressed: _uploadAndAnalyzeSourceCode,
+            icon: Icon(Icons.code),
+            label: Text('Upload Code'),
+          ),
+          ElevatedButton.icon(
+            onPressed: _pasteAndAnalyzeSourceCode,
+            icon: Icon(Icons.paste),
+            label: Text('Paste Code'),
+          ),
+        ],
       ),
     );
   }
@@ -931,6 +1062,15 @@ abstract class Message extends StatelessWidget {
           results: (json['results'] as List)
               .map((item) => WebSearchResult.fromJson(item))
               .toList(),
+        );
+      case 'sourceCodeAnalysis':
+        return SourceCodeAnalysisMessage(
+          filename: json['filename'],
+          language: json['language'],
+          summary: json['summary'],
+          complexity: json['complexity'],
+          suggestions: List<String>.from(json['suggestions']),
+          code: json['code'],
         );
       default:
         throw ArgumentError('Unknown message type: ${json['type']}');
@@ -1371,5 +1511,93 @@ class ExcelDataGridSource extends DataGridSource {
         cells: row.map((cell) => DataGridCell(columnName: 'Column${row.indexOf(cell) + 1}', value: cell)).toList(),
       );
     }).toList();
+  }
+}
+
+class SourceCodeAnalysisMessage extends Message {
+  final String filename;
+  final String language;
+  final String summary;
+  final String complexity;
+  final List<String> suggestions;
+  final String code;
+
+  SourceCodeAnalysisMessage({
+    required this.filename,
+    required this.language,
+    required this.summary,
+    required this.complexity,
+    required this.suggestions,
+    required this.code,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Source Code Analysis: $filename',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 8.0),
+            Text('Language: $language'),
+            Text('Complexity: $complexity'),
+            SizedBox(height: 8.0),
+            Text('Summary:', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(summary),
+            SizedBox(height: 8.0),
+            Text('Suggestions:', style: TextStyle(fontWeight: FontWeight.bold)),
+            ...suggestions.map((s) => Text('• $s')),
+            SizedBox(height: 8.0),
+            Text('Code:', style: TextStyle(fontWeight: FontWeight.bold)),
+            Container(
+              padding: EdgeInsets.all(8.0),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(4.0),
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Text(
+                  code,
+                  style: TextStyle(fontFamily: 'Courier'),
+                ),
+              ),
+            ),
+            SizedBox(height: 8.0),
+            ElevatedButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: code));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Code copied to clipboard')),
+                );
+              },
+              child: Text('Copy Code'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'sourceCodeAnalysis',
+      'filename': filename,
+      'language': language,
+      'summary': summary,
+      'complexity': complexity,
+      'suggestions': suggestions,
+      'code': code,
+    };
   }
 }
