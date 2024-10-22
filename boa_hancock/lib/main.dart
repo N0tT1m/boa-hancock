@@ -16,6 +16,44 @@ import 'package:web_socket_channel/io.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+import 'package:path/path.dart' as path;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io' show Platform, Process;
+
+// Update the FileItem class to include share_name
+class FileItem {
+  final String name;
+  final String path;
+  final bool isDirectory;
+  final int size;
+  final DateTime modifiedTime;
+  final String share_name;    // Added this field
+  final String display_name;  // Added this field
+
+  FileItem({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    required this.size,
+    required this.modifiedTime,
+    required this.share_name,    // Added this parameter
+    required this.display_name,  // Added this parameter
+  });
+
+  factory FileItem.fromJson(Map<String, dynamic> json) {
+    return FileItem(
+      name: json['name'],
+      path: json['path'],
+      isDirectory: json['is_directory'],
+      size: json['size'],
+      modifiedTime: DateTime.parse(json['modified_time']),
+      share_name: json['share_name'],       // Parse from JSON
+      display_name: json['display_name'],   // Parse from JSON
+    );
+  }
+}
 
 // Update the ImageSearchResult class
 class ImageSearchResult {
@@ -395,6 +433,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // Update the sendMessage method to handle the response properly
   Future<void> _sendMessage(String text) async {
     try {
       final response = await http.post(
@@ -403,15 +442,21 @@ class _ChatScreenState extends State<ChatScreen> {
         body: json.encode({
           'message': text,
           'conversation_id': _conversationId,
-          'client_id': _conversationId, // Add this line
+          'client_id': _conversationId,
         }),
       );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+
+        // Add a type field if it's missing
+        if (data['message'] != null && !data.containsKey('type')) {
+          data['type'] = 'chat';
+        }
+
         _handleIncomingMessage(data);
       } else {
-        throw Exception('Failed to send message');
+        throw Exception('Failed to send message: ${response.statusCode}');
       }
     } catch (e) {
       print('Error sending message: $e');
@@ -427,11 +472,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleIncomingMessage(dynamic message) {
     print('Received message: $message'); // Debug print
+
+    // Handle both String and Map messages
     final data = message is String ? json.decode(message) : message;
+
     setState(() {
-      if (data['type'] == 'chat') {
+      if (data['type'] == 'chat' || data['message'] != null) {
+        // Handle both old and new message formats
+        final messageText = data['message'] ?? data['content'];
         _messages.insert(0, ChatMessage(
-          text: data['message'],
+          text: messageText,
           isUser: false,
         ));
       } else if (data['type'] == 'search') {
@@ -446,6 +496,13 @@ class _ChatScreenState extends State<ChatScreen> {
               .toList();
           _messages.insert(0, WebSearchResultMessage(results: webResults));
         }
+      } else {
+        // Fallback case for unhandled message types
+        print('Unknown message format: $data');
+        _messages.insert(0, ChatMessage(
+          text: data['message'] ?? 'Received response in unknown format',
+          isUser: false,
+        ));
       }
       _isLoading = false;
     });
@@ -1240,6 +1297,16 @@ Please provide:
             icon: Icon(Icons.upload_file),
             onPressed: _uploadAndAnalyzeDocument,
             tooltip: 'Analyze Document',
+          ),
+          IconButton(
+            icon: Icon(Icons.movie),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => MovieBrowser()),
+              );
+            },
+            tooltip: 'Browse Movies',
           ),
         ],
       ),
@@ -2295,5 +2362,367 @@ class DocumentAnalysisMessage extends Message {
         'excel_data': result.excelData,
       },
     };
+  }
+}
+
+class MovieBrowser extends StatefulWidget {
+  @override
+  _MovieBrowserState createState() => _MovieBrowserState();
+}
+
+class _MovieBrowserState extends State<MovieBrowser> {
+  String get baseUrl {
+    return 'http://192.168.1.78:8000';
+  }
+
+  List<FileItem> _items = [];
+  String _currentPath = "/";
+  bool _isLoading = false;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDirectory(_currentPath);
+  }
+
+  Future<void> _loadDirectory(String path) async {
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await http.get(
+        Uri.parse('${baseUrl}/api/movies/list?path=${Uri.encodeComponent(path)}'),
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        setState(() {
+          _items = data.map((item) => FileItem.fromJson(item)).toList();
+          _currentPath = path;
+        });
+      } else {
+        throw Exception('Failed to load directory');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading directory: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Movie Browser'),
+        leading: _currentPath != "/" ? IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            final parentPath = path.dirname(_currentPath);
+            _loadDirectory(parentPath);
+          },
+        ) : null,
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+        controller: _scrollController,
+        itemCount: _items.length,
+        itemBuilder: (context, index) {
+          final item = _items[index];
+          return ListTile(
+            leading: Icon(
+              item.isDirectory ? Icons.folder : Icons.movie,
+              color: item.isDirectory ? Colors.amber : Colors.blue,
+            ),
+            title: Text(item.name),
+            subtitle: !item.isDirectory
+                ? Text(_formatFileSize(item.size))
+                : null,
+            onTap: () {
+              if (item.isDirectory) {
+                _loadDirectory(item.path);
+              } else {
+                _playMovie(item);
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  void _playMovie(FileItem movie) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MoviePlayer(movie: movie),
+      ),
+    );
+  }
+
+  String _formatFileSize(int size) {
+    final gb = size / (1024 * 1024 * 1024);
+    if (gb >= 1) {
+      return '${gb.toStringAsFixed(1)} GB';
+    }
+    final mb = size / (1024 * 1024);
+    if (mb >= 1) {
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+    final kb = size / 1024;
+    return '${kb.toStringAsFixed(1)} KB';
+  }
+}
+
+class MoviePlayer extends StatefulWidget {
+  final FileItem movie;
+
+  MoviePlayer({required this.movie});
+
+  @override
+  _MoviePlayerState createState() => _MoviePlayerState();
+}
+
+class _MoviePlayerState extends State<MoviePlayer> {
+  String get baseUrl {
+    return 'http://192.168.1.78:8000';
+  }
+
+  VideoPlayerController? _videoPlayerController;
+  ChewieController? _chewieController;
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializePlayer();
+  }
+
+  String _constructMovieUrl() {
+    final shareName = Uri.encodeComponent(widget.movie.share_name);
+    final moviePath = Uri.encodeComponent(widget.movie.path.replaceAll('\\', '/').trim());
+    final url = '${baseUrl}/api/movies/stream/$shareName/$moviePath';
+    debugPrint('Constructed URL: $url');
+    return url;
+  }
+
+  Future<void> _initializePlayer() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final movieUrl = _constructMovieUrl();
+
+      if (kIsWeb) {
+        _videoPlayerController = VideoPlayerController.network(
+          movieUrl,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+      } else {
+        _videoPlayerController = VideoPlayerController.networkUrl(
+          Uri.parse(movieUrl),
+          httpHeaders: {
+            'Accept-Ranges': 'bytes',
+          },
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+      }
+
+      // Wait for the controller to initialize
+      await _videoPlayerController!.initialize();
+
+      // Calculate aspect ratio with a fallback
+      double aspectRatio = _videoPlayerController!.value.aspectRatio;
+      if (aspectRatio.isNaN || aspectRatio <= 0) {
+        aspectRatio = 16 / 9;
+      }
+
+      _chewieController = ChewieController(
+        videoPlayerController: _videoPlayerController!,
+        autoPlay: false,
+        looping: false,
+        aspectRatio: aspectRatio,
+        allowFullScreen: true,
+        allowMuting: true,
+        showControls: true,
+        placeholder: Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+          ),
+        ),
+        errorBuilder: (context, errorMessage) {
+          return _buildErrorWidget(errorMessage);
+        },
+      );
+
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error initializing video player: $e');
+      setState(() {
+        _isLoading = false;
+        _errorMessage = e.toString();
+      });
+    }
+  }
+
+  Widget _buildErrorWidget(String errorMessage) {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, color: Colors.red, size: 48),
+            SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'Error playing video: $errorMessage',
+                style: TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _retryInitialization,
+              icon: Icon(Icons.refresh),
+              label: Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+            ),
+            if (!kIsWeb)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: ElevatedButton.icon(
+                  onPressed: _openInDefaultPlayer,
+                  icon: Icon(Icons.open_in_new),
+                  label: Text('Open in Default Player'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openInDefaultPlayer() async {
+    if (kIsWeb) return;
+
+    final url = _constructMovieUrl();
+    try {
+      final uri = Uri.parse(url);
+      if (Platform.isWindows) {
+        await Process.run('cmd', ['/c', 'start', uri.toString()]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [uri.toString()]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [uri.toString()]);
+      }
+    } catch (e) {
+      debugPrint('Error opening default player: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to open default player')),
+        );
+      }
+    }
+  }
+
+  Future<void> _retryInitialization() async {
+    await _disposeControllers();
+    await _initializePlayer();
+  }
+
+  Future<void> _disposeControllers() async {
+    _chewieController?.dispose();
+    await _videoPlayerController?.dispose();
+    _videoPlayerController = null;
+    _chewieController = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: Text(widget.movie.name),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _retryInitialization,
+            tooltip: 'Reload video',
+          ),
+          if (!kIsWeb)
+            IconButton(
+              icon: Icon(Icons.open_in_new),
+              onPressed: _openInDefaultPlayer,
+              tooltip: 'Open in default player',
+            ),
+        ],
+      ),
+      body: SafeArea(
+        child: Center(
+          child: _buildPlayer(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayer() {
+    if (_isLoading) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Loading video...',
+            style: TextStyle(color: Colors.white),
+          ),
+        ],
+      );
+    }
+
+    if (_errorMessage != null) {
+      return _buildErrorWidget(_errorMessage!);
+    }
+
+    if (_chewieController != null) {
+      return Chewie(controller: _chewieController!);
+    }
+
+    return Center(
+      child: Text(
+        'Unable to load video player',
+        style: TextStyle(color: Colors.white),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _disposeControllers();
+    super.dispose();
   }
 }
