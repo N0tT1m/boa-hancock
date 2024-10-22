@@ -202,7 +202,7 @@ def handle_expense_request(user_input):
             duration = parse_duration(user_input)
             start_time = global_state.event_creation_stage['date_time']
             end_time = start_time + duration
-            result = add_expense(
+            result = add_expense    (
                 global_state.expense_info['amount'],
                 global_state.expense_info['category'],
                 global_state.expense_info['description'],

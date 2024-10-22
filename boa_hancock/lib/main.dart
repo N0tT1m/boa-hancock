@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,11 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/material.dart';
+import 'dart:math';
 
 // Update the ImageSearchResult class
 class ImageSearchResult {
@@ -65,11 +71,11 @@ class WebSearchResult {
   }
 }
 
-// Update DocumentAnalysisResult to handle Excel data
+// Update the DocumentAnalysisResult class
 class DocumentAnalysisResult {
   final String filename;
   final String content;
-  final Map<String, dynamic> metadata;
+  final DocumentMetadata metadata;
   final List<List<dynamic>>? excelData;
 
   DocumentAnalysisResult({
@@ -83,7 +89,7 @@ class DocumentAnalysisResult {
     return DocumentAnalysisResult(
       filename: json['filename'] ?? '',
       content: json['content'] ?? '',
-      metadata: json['metadata'] ?? {},
+      metadata: DocumentMetadata.fromJson(json['metadata'] ?? {}),
       excelData: json['excel_data'] != null
           ? List<List<dynamic>>.from(json['excel_data']
           .map((row) => List<dynamic>.from(row)))
@@ -92,6 +98,141 @@ class DocumentAnalysisResult {
   }
 }
 
+class DocumentMetadata {
+  final int numRows;
+  final int numColumns;
+  final List<String> columnNames;
+  final int numPages;
+  final String? author;
+  final String? creator;
+  final String? producer;
+  final String? subject;
+  final String? title;
+  final String? creationDate;
+  final String? modificationDate;
+  final String? language;
+  final String? summary;
+  final String? complexity;
+  final List<String>? suggestions;
+
+  DocumentMetadata({
+    this.numRows = 0,
+    this.numColumns = 0,
+    this.columnNames = const [],
+    this.numPages = 0,
+    this.author,
+    this.creator,
+    this.producer,
+    this.subject,
+    this.title,
+    this.creationDate,
+    this.modificationDate,
+    this.language,
+    this.summary,
+    this.complexity,
+    this.suggestions,
+  });
+
+  factory DocumentMetadata.fromJson(Map<String, dynamic> json) {
+    return DocumentMetadata(
+      numRows: json['num_rows'] ?? 0,
+      numColumns: json['num_columns'] ?? 0,
+      columnNames: List<String>.from(json['column_names'] ?? []),
+      numPages: json['num_pages'] ?? 0,
+      author: json['author'],
+      creator: json['creator'],
+      producer: json['producer'],
+      subject: json['subject'],
+      title: json['title'],
+      creationDate: json['creation_date'],
+      modificationDate: json['modification_date'],
+      language: json['language'],
+      summary: json['summary'],
+      complexity: json['complexity'],
+      suggestions: json['suggestions'] != null ? List<String>.from(json['suggestions']) : null,
+    );
+  }
+}
+
+class FinancialAnalysis {
+  final List<Expense> expenses;
+  final List<Income> incomes;
+  final String analysis;
+
+  FinancialAnalysis({
+    required this.expenses,
+    required this.incomes,
+    required this.analysis,
+  });
+
+  factory FinancialAnalysis.fromJson(Map<String, dynamic> json) {
+    return FinancialAnalysis(
+      expenses: (json['expenses'] as List).map((e) => Expense.fromJson(e)).toList(),
+      incomes: (json['incomes'] as List).map((i) => Income.fromJson(i)).toList(),
+      analysis: json['analysis'],
+    );
+  }
+}
+
+class Expense {
+  final double amount;
+  final String category;
+  final String description;
+  final String date;
+
+  Expense({
+    required this.amount,
+    required this.category,
+    required this.description,
+    required this.date,
+  });
+
+  factory Expense.fromJson(Map<String, dynamic> json) {
+    return Expense(
+      amount: json['amount'],
+      category: json['category'],
+      description: json['description'],
+      date: json['date'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'amount': amount,
+      'category': category,
+      'description': description,
+      'date': date,
+    };
+  }
+}
+
+class Income {
+  final double amount;
+  final String source;
+  final String date;
+
+  Income({
+    required this.amount,
+    required this.source,
+    required this.date,
+  });
+
+  factory Income.fromJson(Map<String, dynamic> json) {
+    return Income(
+      amount: json['amount'],
+      source: json['source'],
+      date: json['date'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'amount': amount,
+      'source': source,
+      'date': date,
+    };
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -126,46 +267,330 @@ class ChatScreen extends StatefulWidget {
   _ChatScreenState createState() => _ChatScreenState();
 }
 
+class WebSocketManager {
+  WebSocketChannel? _channel;
+  Timer? _reconnectionTimer;
+  final String _wsUrl;
+  final Function(dynamic) _onMessage;
+  final Function(dynamic) _onError;
+  final Function() _onReconnect;
+
+  WebSocketManager(this._wsUrl, this._onMessage, this._onError, this._onReconnect);
+
+  void connect() {
+    try {
+      _channel = IOWebSocketChannel.connect(Uri.parse(_wsUrl));
+      _channel!.stream.listen(
+        _onMessage,
+        onError: (error) {
+          print('WebSocket error: $error');
+          _onError(error);
+          _scheduleReconnection();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _scheduleReconnection();
+        },
+      );
+    } catch (e) {
+      print('Error connecting to WebSocket: $e');
+      _scheduleReconnection();
+    }
+  }
+
+  void _scheduleReconnection() {
+    _reconnectionTimer?.cancel();
+    _reconnectionTimer = Timer(Duration(seconds: 5), () {
+      print('Attempting to reconnect...');
+      connect();
+      _onReconnect();
+    });
+  }
+
+  void send(String message) {
+    _channel?.sink.add(message);
+  }
+
+  void dispose() {
+    _channel?.sink.close();
+    _reconnectionTimer?.cancel();
+  }
+}
+
+
 class _ChatScreenState extends State<ChatScreen> {
   final List<Message> _messages = [];
   final TextEditingController _textController = TextEditingController();
   bool _isLoading = false;
   late String _conversationId;
   final FocusNode _focusNode = FocusNode();
+  WebSocketChannel? _channel;
+  Timer? _reconnectionTimer;
+  late WebSocketManager _wsManager;
 
   String get apiUrl {
-    return 'http://192.168.1.87:8000/api/chat';
+    return 'http://192.168.1.90:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.87:8000/api/search';
+    return 'http://192.168.1.90:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.87:8000/api/analyze-document';
+    return 'http://192.168.1.90:8000/api/analyze-document';
   }
 
   String get expenseApiUrl {
-    return 'http://192.168.1.87:8000/api/expense';
+    return 'http://192.168.1.90:8000/api/expense';
   }
 
   String get incomeApiUrl {
-    return 'http://192.168.1.87:8000/api/income';
+    return 'http://192.168.1.90:8000/api/income';
   }
 
   String get expensesApiUrl {
-    return 'http://192.168.1.87:8000/api/expenses';
+    return 'http://192.168.1.90:8000/api/expenses';
   }
 
   String get calendarApiUrl {
-    return 'http://192.168.1.87:8000/api/calendar';
+    return 'http://192.168.1.90:8000/api/calendar';
   }
+
+  String get financialApiUrl {
+    return 'http://192.168.1.90:8000/api/financial-analysis';
+  }
+
+  String get capitalOneLoginApiUrl {
+    return 'http://192.168.1.90:8000/api/login-capital-one';
+  }
+
+  // Remove WebSocket-related code
+  // late WebSocketManager _wsManager;
 
   @override
   void initState() {
     super.initState();
-    _conversationId = widget.prefs.getString('conversation_id') ?? DateTime.now().millisecondsSinceEpoch.toString();
+    _conversationId = DateTime.now().millisecondsSinceEpoch.toString();
     _sendInitialMessage();
+  }
+
+  void _handleSubmitted(String text) {
+    _textController.clear();
+    setState(() {
+      _messages.insert(0, ChatMessage(
+        text: text,
+        isUser: true,
+      ));
+      _isLoading = true;
+    });
+
+    if (text.toLowerCase().startsWith('image search ')) {
+      final query = text.substring('image search '.length);
+      _performImageSearch(query);
+    } else if (text.toLowerCase().startsWith('search for ')) {
+      final query = text.substring('search for '.length);
+      _performWebSearch(query);
+    } else {
+      _sendMessage(text);
+    }
+  }
+
+  Future<void> _sendMessage(String text) async {
+    try {
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'message': text,
+          'conversation_id': _conversationId,
+          'client_id': _conversationId, // Add this line
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _handleIncomingMessage(data);
+      } else {
+        throw Exception('Failed to send message');
+      }
+    } catch (e) {
+      print('Error sending message: $e');
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error: Unable to send message. Please try again.',
+          isUser: false,
+        ));
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _handleIncomingMessage(dynamic message) {
+    print('Received message: $message'); // Debug print
+    final data = message is String ? json.decode(message) : message;
+    setState(() {
+      if (data['type'] == 'chat') {
+        _messages.insert(0, ChatMessage(
+          text: data['message'],
+          isUser: false,
+        ));
+      } else if (data['type'] == 'search') {
+        if (data['search_type'] == 'image') {
+          final imageResults = (data['results'] as List)
+              .map((item) => ImageSearchResult.fromJson(item))
+              .toList();
+          _messages.insert(0, ImageSearchResultMessage(results: imageResults));
+        } else if (data['search_type'] == 'web') {
+          final webResults = (data['results'] as List)
+              .map((item) => WebSearchResult.fromJson(item))
+              .toList();
+          _messages.insert(0, WebSearchResultMessage(results: webResults));
+        }
+      }
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _performImageSearch(String query) async {
+    try {
+      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=image'));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _handleIncomingMessage({
+          'type': 'search',
+          'search_type': 'image',
+          'results': data['images'],
+        });
+      } else {
+        throw Exception('Failed to perform image search');
+      }
+    } catch (e) {
+      print('Error performing image search: $e');
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error: Unable to perform image search. Please try again.',
+          isUser: false,
+        ));
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _performWebSearch(String query) async {
+    try {
+      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=web'));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _handleIncomingMessage({
+          'type': 'search',
+          'search_type': 'web',
+          'results': data['results'],
+        });
+      } else {
+        throw Exception('Failed to perform web search');
+      }
+    } catch (e) {
+      print('Error performing web search: $e');
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error: Unable to perform web search. Please try again.',
+          isUser: false,
+        ));
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _handleWebSocketError(dynamic error) {
+    setState(() {
+      _messages.insert(0, ChatMessage(
+        text: "Connection error. Attempting to reconnect...",
+        isUser: false,
+      ));
+    });
+  }
+
+  void _handleWebSocketReconnect() {
+    setState(() {
+      _messages.insert(0, ChatMessage(
+        text: "Reconnected to server.",
+        isUser: false,
+      ));
+    });
+  }
+
+  void _connectWebSocket() {
+    final wsUrl = 'ws://192.168.1.90:8000/ws/$_conversationId';
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      _channel!.stream.listen(
+        _handleIncomingMessage,
+        onError: (error) {
+          print('WebSocket error: $error');
+          _scheduleReconnection();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _scheduleReconnection();
+        },
+      );
+    } catch (e) {
+      print('Error connecting to WebSocket: $e');
+      _scheduleReconnection();
+    }
+  }
+
+  void _scheduleReconnection() {
+    Timer(Duration(seconds: 5), _connectWebSocket);
+  }
+
+  Future<void> _loginToCapitalOne() async {
+    final username = await _showInputDialog('Enter Capital One Username');
+    if (username == null) return;
+
+    final password = await _showInputDialog('Enter Capital One Password');
+    if (password == null) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final success = await loginToCapitalOne(username, password);
+
+    setState(() {
+      _isLoading = false;
+      _messages.insert(0, ChatMessage(
+        text: success ? 'Successfully logged into Capital One!' : 'Failed to log into Capital One. Please try again.',
+        isUser: false,
+      ));
+    });
+  }
+
+  Future<bool> loginToCapitalOne(String username, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse(capitalOneLoginApiUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'username': username,
+          'password': password,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        print('Login successful: ${responseData['message']}');
+        return true;
+      } else {
+        print('Login failed: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('Error during login: $e');
+      return false;
+    }
   }
 
   void _loadPreviousConversation() {
@@ -206,7 +631,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (fileBytes != null) {
         String code = utf8.decode(fileBytes);
-        await _analyzeSourceCode(code, file.name);
+        await _sendCodeForRefactoring(code, file.name);
       } else {
         setState(() {
           _messages.insert(0, ChatMessage(
@@ -221,51 +646,49 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _pasteAndAnalyzeSourceCode() async {
     final code = await _showCodeInputDialog();
     if (code != null && code.isNotEmpty) {
-      await _analyzeSourceCode(code, 'Pasted Code');
+      await _sendCodeForRefactoring(code, 'Pasted Code');
     }
   }
 
-  Future<void> _analyzeSourceCode(String code, String filename) async {
+  Future<void> _sendCodeForRefactoring(String code, String filename) async {
     setState(() {
       _isLoading = true;
     });
 
     try {
-      String prompt = '''Analyze the following source code and provide:
-1. The programming language
-2. A brief summary of what the code does
-3. An assessment of its complexity (Low, Medium, or High)
-4. 2-3 suggestions for improvement or best practices
-5. Any potential security concerns
+      final refactoringInstructions = await _showRefactoringInstructionsDialog();
+      if (refactoringInstructions == null || refactoringInstructions.isEmpty) {
+        throw Exception('Refactoring instructions are required');
+      }
 
-Here's the code:
+      final prompt = '''Please refactor the following code based on these instructions:
+
+Instructions: $refactoringInstructions
+
+Here's the code to refactor:
 
 ```
 $code
 ```
 
-Please format your response as follows:
-Language: [language name]
-Summary: [brief summary]
-Complexity: [Low/Medium/High]
-Suggestions:
-- [suggestion 1]
-- [suggestion 2]
-- [suggestion 3 (if applicable)]
-Security Concerns: [list any security concerns or "None identified" if none]''';
+Please provide:
+1. The refactored code
+2. A summary of changes made
+3. Any potential improvements or suggestions for further refactoring
+''';
 
-      await _sendMessage(prompt);
+      _sendMessage(prompt);
 
       setState(() {
         _messages.insert(0, ChatMessage(
-          text: "Source code from $filename has been analyzed. The results are in the above message.",
+          text: "Source code from $filename has been sent for refactoring. The results will be in the upcoming message.",
           isUser: false,
         ));
       });
     } catch (e) {
       setState(() {
         _messages.insert(0, ChatMessage(
-          text: 'Error analyzing source code: ${e.toString()}',
+          text: 'Error sending code for refactoring: ${e.toString()}',
           isUser: false,
         ));
       });
@@ -274,6 +697,36 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
         _isLoading = false;
       });
     }
+  }
+
+  Future<String?> _showRefactoringInstructionsDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        String instructions = '';
+        return AlertDialog(
+          title: Text('Enter Refactoring Instructions'),
+          content: TextField(
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            decoration: InputDecoration(hintText: 'E.g., Improve performance, apply SOLID principles, etc.'),
+            onChanged: (value) {
+              instructions = value;
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: Text('Refactor'),
+              onPressed: () => Navigator.of(context).pop(instructions),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<String?> _showCodeInputDialog() async {
@@ -304,6 +757,49 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
         );
       },
     );
+  }
+
+  Future<void> _getFinancialAnalysis() async {
+    try {
+      final expensesResponse = await http.get(Uri.parse(expensesApiUrl));
+      final incomesResponse = await http.get(Uri.parse(incomeApiUrl));
+
+      if (expensesResponse.statusCode == 200 && incomesResponse.statusCode == 200) {
+        final expenses = (json.decode(expensesResponse.body) as List)
+            .map((e) => Expense.fromJson(e))
+            .toList();
+        final incomes = (json.decode(incomesResponse.body) as List)
+            .map((i) => Income.fromJson(i))
+            .toList();
+
+        final analysisResponse = await http.post(
+          Uri.parse('$financialApiUrl'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'expenses': expenses.map((e) => e.toJson()).toList(),
+            'incomes': incomes.map((i) => i.toJson()).toList(),
+          }),
+        );
+
+        if (analysisResponse.statusCode == 200) {
+          final analysis = FinancialAnalysis.fromJson(json.decode(analysisResponse.body));
+          setState(() {
+            _messages.insert(0, FinancialAnalysisMessage(analysis: analysis));
+          });
+        } else {
+          throw Exception('Failed to get financial analysis');
+        }
+      } else {
+        throw Exception('Failed to retrieve expenses or income');
+      }
+    } catch (e) {
+      setState(() {
+        _messages.insert(0, ChatMessage(
+          text: 'Error getting financial analysis: $e',
+          isUser: false,
+        ));
+      });
+    }
   }
 
   Future<void> _addExpense() async {
@@ -474,23 +970,23 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
             Flexible(
               child: TextField(
                 controller: _textController,
-                focusNode: _focusNode,
-                onSubmitted: _isLoading ? null : _handleSubmitted,
-                decoration: InputDecoration.collapsed(
-                  hintText: 'Send a message or search',
+                onSubmitted: _handleSubmitted,
+                decoration: InputDecoration(
+                  hintText: 'Send a message',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(25.0),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.8),
                 ),
-                keyboardType: TextInputType.multiline,
-                maxLines: null,
-                textInputAction: TextInputAction.newline,
               ),
             ),
             Container(
               margin: EdgeInsets.symmetric(horizontal: 4.0),
               child: IconButton(
                 icon: Icon(Icons.send),
-                onPressed: _isLoading
-                    ? null
-                    : () => _handleSubmitted(_textController.text),
+                onPressed: () => _handleSubmitted(_textController.text),
               ),
             ),
           ],
@@ -499,32 +995,16 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
     );
   }
 
-  void _handleSubmitted(String text) {
-    _textController.clear();
-    _focusNode.requestFocus();
-    setState(() {
-      _messages.insert(0, ChatMessage(
-        text: text,
-        isUser: true,
-      ));
-      _isLoading = true;
-    });
-    _saveConversation();
-
-    // Process the submitted text
-    if (text.toLowerCase().startsWith('image search ')) {
-      _performImageSearch(text.substring(13));
-    } else if (text.toLowerCase().startsWith('search for ')) {
-      _performWebSearch(text.substring(11));
-    } else {
-      _sendMessage(text);
-    }
+  @override
+  void dispose() {
+    _wsManager.dispose();
+    super.dispose();
   }
 
   Future<void> _uploadAndAnalyzeDocument() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv'],
+      allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'py', 'js', 'java', 'cpp', 'cs', 'go', 'rb', 'php', 'swift', 'kt'],
     );
 
     if (result != null) {
@@ -560,117 +1040,6 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
           _isLoading = false;
         });
       }
-    }
-  }
-
-  // Update the _performSearch method in the ChatScreen class
-  Future<void> _performImageSearch(String query) async {
-    try {
-      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=image'));
-
-      if (response.statusCode == 200) {
-        final searchData = json.decode(response.body);
-
-        if (searchData['images'] != null) {
-          final imageResults = (searchData['images'] as List)
-              .map((item) => ImageSearchResult.fromJson(item))
-              .toList();
-
-          setState(() {
-            _messages.insert(0, ImageSearchResultMessage(results: imageResults));
-          });
-        } else {
-          setState(() {
-            _messages.insert(0, ChatMessage(
-              text: 'No image results found.',
-              isUser: false,
-            ));
-          });
-        }
-      } else {
-        throw Exception('Failed to load search results');
-      }
-    } catch (e) {
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error performing search: ${e.toString()}',
-          isUser: false,
-        ));
-      });
-    }
-
-    setState(() {
-      _isLoading = false;
-    });
-  }
-
-  // Update the _performWebSearch method
-  Future<void> _performWebSearch(String query) async {
-    try {
-      final response = await http.get(Uri.parse('$searchApiUrl?q=$query&type=web'));
-
-      if (response.statusCode == 200) {
-        final searchData = json.decode(response.body);
-
-        if (searchData['results'] != null) {
-          final webResults = (searchData['results'] as List)
-              .map((item) => WebSearchResult.fromJson(item))
-              .toList();
-
-          setState(() {
-            _messages.insert(0, WebSearchResultMessage(results: webResults));
-          });
-        } else {
-          setState(() {
-            _messages.insert(0, ChatMessage(
-              text: 'No web results found.',
-              isUser: false,
-            ));
-          });
-        }
-      } else {
-        throw Exception('Failed to load search results');
-      }
-    } catch (e) {
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error performing web search: ${e.toString()}',
-          isUser: false,
-        ));
-      });
-    }
-  }
-
-  Future<void> _sendMessage(String text) async {
-    try {
-      final response = await http.post(
-        Uri.parse(apiUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'message': text,
-          'conversation_id': _conversationId
-        }),
-      ).timeout(Duration(seconds: 3000));
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        setState(() {
-          _messages.insert(0, ChatMessage(
-            text: responseData['message'],
-            isUser: false,
-          ));
-          _conversationId = responseData['metadata']['conversation_id'];
-        });
-      } else {
-        throw Exception('Failed to load response');
-      }
-    } catch (e) {
-      setState(() {
-        _messages.insert(0, ChatMessage(
-          text: 'Error: Unable to get response. Please try again.',
-          isUser: false,
-        ));
-      });
     }
   }
 
@@ -821,7 +1190,16 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Ai Bitch'),
+        title: Text('Ai Bitch', style: GoogleFonts.pacifico(fontSize: 24)),
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Colors.purple, Colors.blue],
+            ),
+          ),
+        ),
         actions: [
           IconButton(
             icon: Icon(Icons.event),
@@ -848,6 +1226,21 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
             onPressed: _getIncome,
             tooltip: 'View Income',
           ),
+          IconButton(
+            icon: Icon(Icons.analytics),
+            onPressed: _getFinancialAnalysis,
+            tooltip: 'Get Financial Analysis',
+          ),
+          IconButton(
+            icon: Icon(Icons.login),
+            onPressed: _loginToCapitalOne,
+            tooltip: 'Login to Capital One',
+          ),
+          IconButton(
+            icon: Icon(Icons.upload_file),
+            onPressed: _uploadAndAnalyzeDocument,
+            tooltip: 'Analyze Document',
+          ),
         ],
       ),
       body: LayoutBuilder(
@@ -863,39 +1256,34 @@ Security Concerns: [list any security concerns or "None identified" if none]''';
                 fit: BoxFit.cover,
               ),
             ),
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(8.0),
-                    reverse: true,
-                    itemBuilder: (_, int index) {
-                      if (_messages[index] is ImageSearchResultMessage) {
-                        return LayoutBuilder(
-                          builder: (context, constraints) {
-                            return Container(
-                              width: constraints.maxWidth,
-                              child: _messages[index],
-                            );
-                          },
-                        );
-                      }
-                      return _messages[index];
-                    },
-                    itemCount: _messages.length,
-                  ),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(0.7),
+                    Colors.purple.withOpacity(0.3),
+                  ],
                 ),
-                Divider(height: 1.0),
-                Container(
-                  decoration: BoxDecoration(color: Theme.of(context).cardColor),
-                  child: Column(
-                    children: [
-                      _buildFilePickerButton(),
-                      _buildTextComposer(),
-                    ],
+              ),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      padding: EdgeInsets.all(8.0),
+                      reverse: true,
+                      itemBuilder: (_, int index) => _messages[index],
+                      itemCount: _messages.length,
+                    ),
                   ),
-                ),
-              ],
+                  Divider(height: 1.0),
+                  Container(
+                    decoration: BoxDecoration(color: Theme.of(context).cardColor),
+                    child: _buildTextComposer(),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -1070,7 +1458,19 @@ abstract class Message extends StatelessWidget {
           summary: json['summary'],
           complexity: json['complexity'],
           suggestions: List<String>.from(json['suggestions']),
+          securityConcerns: [],
           code: json['code'],
+        );
+      case 'sourceCodeRefactoring':
+        return SourceCodeRefactoringMessage(
+          originalCode: json['originalCode'],
+          refactoredCode: json['refactoredCode'],
+          summary: json['summary'],
+          suggestions: List<String>.from(json['suggestions']),
+        );
+      case 'financialAnalysis':
+        return FinancialAnalysisMessage(
+          analysis: FinancialAnalysis.fromJson(json),
         );
       default:
         throw ArgumentError('Unknown message type: ${json['type']}');
@@ -1088,8 +1488,8 @@ class ChatMessage extends Message {
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
-      text: json['text'],
-      isUser: json['isUser'],
+      text: json['text'] as String,
+      isUser: json['isUser'] as bool,
     );
   }
 
@@ -1113,23 +1513,41 @@ class ChatMessage extends Message {
           if (!isUser)
             Container(
               margin: const EdgeInsets.only(right: 16.0),
-              child: const CircleAvatar(child: Text('Ai')),
+              child: CircleAvatar(
+                child: Text('Ai'),
+                backgroundColor: Colors.purple.withOpacity(0.8),
+              ),
             ),
           Flexible(
             child: Container(
               padding: const EdgeInsets.all(12.0),
               decoration: BoxDecoration(
-                color: isUser ? Colors.blue[100] : Colors.grey[200],
-                borderRadius: BorderRadius.circular(20.0),
+                color: isUser
+                    ? Colors.blue.withOpacity(0.8)
+                    : Colors.purple.withOpacity(0.8),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(isUser ? 20.0 : 0.0),
+                  topRight: Radius.circular(isUser ? 0.0 : 20.0),
+                  bottomLeft: Radius.circular(20.0),
+                  bottomRight: Radius.circular(20.0),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: Offset(0, 1),
+                  ),
+                ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     isUser ? 'Daddy' : 'Ai Whore',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      color: Colors.white,
                     ),
                   ),
                   const SizedBox(height: 5.0),
@@ -1141,7 +1559,10 @@ class ChatMessage extends Message {
           if (isUser)
             Container(
               margin: const EdgeInsets.only(left: 16.0),
-              child: const CircleAvatar(child: Text('D')),
+              child: CircleAvatar(
+                child: Text('D'),
+                backgroundColor: Colors.blue.withOpacity(0.8),
+              ),
             ),
         ],
       ),
@@ -1152,19 +1573,24 @@ class ChatMessage extends Message {
     if (isUser) {
       return Text(
         text,
-        style: const TextStyle(color: Colors.black87),
+        style: GoogleFonts.roboto(
+          textStyle: TextStyle(fontSize: 16, color: Colors.white),
+        ),
       );
     } else {
       return MarkdownBody(
         data: text,
         selectable: true,
         styleSheet: MarkdownStyleSheet(
-          p: const TextStyle(fontSize: 16, color: Colors.black87),
-          code: TextStyle(
-            backgroundColor: Colors.grey[300],
-            fontFamily: 'Courier',
-            fontSize: 14,
-            color: Colors.black87,
+          p: GoogleFonts.roboto(
+            textStyle: TextStyle(fontSize: 16, color: Colors.white),
+          ),
+          code: GoogleFonts.firaCode(
+            textStyle: TextStyle(
+              backgroundColor: Colors.black.withOpacity(0.3),
+              fontSize: 14,
+              color: Colors.white,
+            ),
           ),
         ),
         builders: {
@@ -1188,8 +1614,16 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8.0),
       decoration: BoxDecoration(
-        color: Colors.grey[200],
+        color: Colors.black.withOpacity(0.6),
         borderRadius: BorderRadius.circular(8.0),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: Offset(0, 1),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1198,12 +1632,14 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
               decoration: BoxDecoration(
-                color: Colors.grey[300],
+                color: Colors.black.withOpacity(0.8),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(8.0)),
               ),
               child: Text(
                 language,
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: GoogleFonts.firaCode(
+                  textStyle: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                ),
               ),
             ),
           Stack(
@@ -1212,9 +1648,8 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
                 padding: const EdgeInsets.all(16.0),
                 child: Text(
                   code,
-                  style: const TextStyle(
-                    fontFamily: 'Courier',
-                    fontSize: 14,
+                  style: GoogleFonts.firaCode(
+                    textStyle: TextStyle(fontSize: 14, color: Colors.white),
                   ),
                 ),
               ),
@@ -1222,11 +1657,14 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
                 top: 8.0,
                 right: 8.0,
                 child: IconButton(
-                  icon: const Icon(Icons.copy),
+                  icon: const Icon(Icons.copy, color: Colors.white),
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: code));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Code copied to clipboard')),
+                      SnackBar(
+                        content: Text('Code copied to clipboard'),
+                        backgroundColor: Colors.purple.withOpacity(0.8),
+                      ),
                     );
                   },
                   tooltip: 'Copy code',
@@ -1405,10 +1843,18 @@ class SearchResultMessage extends Message {
   }
 }
 
-class DocumentAnalysisMessage extends Message {
-  final DocumentAnalysisResult result;
+class SourceCodeRefactoringMessage extends Message {
+  final String originalCode;
+  final String refactoredCode;
+  final String summary;
+  final List<String> suggestions;
 
-  DocumentAnalysisMessage({required this.result});
+  SourceCodeRefactoringMessage({
+    required this.originalCode,
+    required this.refactoredCode,
+    required this.summary,
+    required this.suggestions,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1420,50 +1866,65 @@ class DocumentAnalysisMessage extends Message {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Document Analysis Result:',
+              'Source Code Refactoring Result:',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 18.0,
               ),
             ),
             SizedBox(height: 8.0),
-            Text('Filename: ${result.filename}'),
-            SizedBox(height: 4.0),
-            if (result.excelData == null)
-              Text('Content Preview: ${result.content.substring(0, min(100, result.content.length))}...')
-            else
-              _buildExcelPreview(),
-            SizedBox(height: 4.0),
-            Text('Metadata:'),
-            ...result.metadata.entries.map((entry) => Text('  ${entry.key}: ${entry.value}')),
+            Text(
+              'Summary of Changes:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(summary),
+            SizedBox(height: 8.0),
+            Text(
+              'Refactored Code:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Container(
+              padding: EdgeInsets.all(8.0),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(4.0),
+              ),
+              child: Text(refactoredCode),
+            ),
+            SizedBox(height: 8.0),
+            Text(
+              'Suggestions for Further Improvement:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            ...suggestions.map((s) => ListTile(
+              title: Text('• $s'),
+            )),
+            SizedBox(height: 8.0),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: originalCode));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Original code copied to clipboard')),
+                    );
+                  },
+                  child: Text('Copy Original Code'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: refactoredCode));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Refactored code copied to clipboard')),
+                    );
+                  },
+                  child: Text('Copy Refactored Code'),
+                ),
+              ],
+            ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildExcelPreview() {
-    if (result.excelData == null || result.excelData!.isEmpty) {
-      return Text('No Excel data available');
-    }
-
-    // Create a DataGridSource from the Excel data
-    final dataGridSource = ExcelDataGridSource(result.excelData!);
-
-    return Container(
-      height: 200,
-      child: SfDataGrid(
-        source: dataGridSource,
-        columnWidthMode: ColumnWidthMode.auto,
-        columns: result.excelData![0].map((header) {
-          return GridColumn(
-            columnName: header.toString(),
-            label: Container(
-              alignment: Alignment.center,
-              child: Text(header.toString()),
-            ),
-          );
-        }).toList(),
       ),
     );
   }
@@ -1471,13 +1932,11 @@ class DocumentAnalysisMessage extends Message {
   @override
   Map<String, dynamic> toJson() {
     return {
-      'type': 'documentAnalysis',
-      'result': {
-        'filename': result.filename,
-        'content': result.content,
-        'metadata': result.metadata,
-        'excel_data': result.excelData,
-      },
+      'type': 'sourceCodeRefactoring',
+      'originalCode': originalCode,
+      'refactoredCode': refactoredCode,
+      'summary': summary,
+      'suggestions': suggestions,
     };
   }
 }
@@ -1520,6 +1979,7 @@ class SourceCodeAnalysisMessage extends Message {
   final String summary;
   final String complexity;
   final List<String> suggestions;
+  final List<String> securityConcerns; // Add this field to display security concerns
   final String code;
 
   SourceCodeAnalysisMessage({
@@ -1528,6 +1988,7 @@ class SourceCodeAnalysisMessage extends Message {
     required this.summary,
     required this.complexity,
     required this.suggestions,
+    required this.securityConcerns, // Use this field to display security concerns
     required this.code,
   });
 
@@ -1540,38 +2001,50 @@ class SourceCodeAnalysisMessage extends Message {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Source Code Analysis: $filename',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18.0,
-              ),
-            ),
-            SizedBox(height: 8.0),
-            Text('Language: $language'),
-            Text('Complexity: $complexity'),
-            SizedBox(height: 8.0),
-            Text('Summary:', style: TextStyle(fontWeight: FontWeight.bold)),
-            Text(summary),
-            SizedBox(height: 8.0),
-            Text('Suggestions:', style: TextStyle(fontWeight: FontWeight.bold)),
-            ...suggestions.map((s) => Text('• $s')),
-            SizedBox(height: 8.0),
-            Text('Code:', style: TextStyle(fontWeight: FontWeight.bold)),
             Container(
-              padding: EdgeInsets.all(8.0),
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(4.0),
-              ),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Text(
-                  code,
-                  style: TextStyle(fontFamily: 'Courier'),
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Source Code Analysis: $filename',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18.0,
                 ),
               ),
             ),
+            SizedBox(height: 8.0),
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Language: $language'),
+                ),
+                Expanded(
+                  child: Text('Complexity: $complexity'),
+                ),
+              ],
+            ),
+            SizedBox(height: 16.0),
+            Text(
+              'Summary:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 4.0),
+            Text(summary),
+            SizedBox(height: 8.0),
+            Text(
+              'Suggestions:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            ...suggestions.map((s) => ListTile(
+              title: Text('• $s'),
+            )),
+            SizedBox(height: 16.0),
+            Text(
+              'Security Concerns:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            ...securityConcerns.map((c) => ListTile(
+              title: Text('• $c'),
+            )),
             SizedBox(height: 8.0),
             ElevatedButton(
               onPressed: () {
@@ -1597,7 +2070,230 @@ class SourceCodeAnalysisMessage extends Message {
       'summary': summary,
       'complexity': complexity,
       'suggestions': suggestions,
+      'securityConcerns': securityConcerns, // Use this field to display security concerns
       'code': code,
+    };
+  }
+}
+
+class FinancialAnalysisMessage extends Message {
+  final FinancialAnalysis analysis;
+
+  FinancialAnalysisMessage({required this.analysis});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Financial Analysis:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 8.0),
+            Text('Total Expenses: \$${_calculateTotalExpenses()}'),
+            Text('Total Income: \$${_calculateTotalIncome()}'),
+            SizedBox(height: 8.0),
+            Text(
+              'AI Analysis:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(analysis.analysis),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double _calculateTotalExpenses() {
+    return analysis.expenses.fold(0, (sum, expense) => sum + expense.amount);
+  }
+
+  double _calculateTotalIncome() {
+    return analysis.incomes.fold(0, (sum, income) => sum + income.amount);
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'financialAnalysis',
+      'expenses': analysis.expenses.map((e) => e.toJson()).toList(),
+      'incomes': analysis.incomes.map((i) => i.toJson()).toList(),
+      'analysis': analysis.analysis,
+    };
+  }
+}
+
+class DocumentAnalysisMessage extends Message {
+  final DocumentAnalysisResult result;
+
+  DocumentAnalysisMessage({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5.0),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Document Analysis Result:',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18.0,
+              ),
+            ),
+            SizedBox(height: 8.0),
+            Text('Filename: ${result.filename}'),
+            SizedBox(height: 12.0),
+            Text(
+              'Document Content:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16.0),
+            ),
+            SizedBox(height: 4.0),
+            _buildFinancialStatementContent(result.content),
+            SizedBox(height: 12.0),
+            Text(
+              'Metadata:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16.0),
+            ),
+            SizedBox(height: 4.0),
+            _buildMetadataWidget(result.metadata),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFinancialStatementContent(String content) {
+    List<String> lines = content.split('\n');
+    List<DataRow> rows = [];
+
+    for (String line in lines) {
+      if (line.trim().isEmpty) continue; // Skip empty lines
+
+      List<String> parts = line.split(RegExp(r'\s{2,}')); // Split by 2 or more spaces
+
+      // Ensure we have at least 2 parts (date and description)
+      if (parts.length < 2) continue;
+
+      // Pad the parts list to ensure we have at least 4 elements
+      while (parts.length < 4) {
+        parts.add('');
+      }
+
+      // If we have more than 4 parts, combine extra parts into the description
+      if (parts.length > 4) {
+        parts = [
+          parts[0],
+          parts.sublist(1, parts.length - 2).join(' '),
+          parts[parts.length - 2],
+          parts[parts.length - 1],
+        ];
+      }
+
+      rows.add(DataRow(cells: [
+        DataCell(Text(parts[0])),
+        DataCell(Text(parts[1])),
+        DataCell(Text(parts[2])),
+        DataCell(Text(parts[3])),
+      ]));
+    }
+
+    if (rows.isEmpty) {
+      return Text('No valid data found in the document.');
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        child: DataTable(
+          columns: [
+            DataColumn(label: Text('Date')),
+            DataColumn(label: Text('Description')),
+            DataColumn(label: Text('Amount')),
+            DataColumn(label: Text('Balance')),
+          ],
+          rows: rows,
+        ),
+      ),
+    );
+  }
+  Widget _buildMetadataWidget(DocumentMetadata metadata) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildMetadataItem('Number of Pages', metadata.numPages.toString()),
+        _buildMetadataItem('Author', metadata.author),
+        _buildMetadataItem('Creator', metadata.creator),
+        _buildMetadataItem('Producer', metadata.producer),
+        _buildMetadataItem('Subject', metadata.subject),
+        _buildMetadataItem('Title', metadata.title),
+        _buildMetadataItem('Creation Date', metadata.creationDate),
+        _buildMetadataItem('Modification Date', metadata.modificationDate),
+      ],
+    );
+  }
+
+  Widget _buildMetadataItem(String label, String? value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4.0),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(color: Colors.black),
+          children: [
+            TextSpan(text: '$label: ', style: TextStyle(fontWeight: FontWeight.bold)),
+            TextSpan(text: value ?? 'N/A'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExcelPreview() {
+    if (result.excelData == null || result.excelData!.isEmpty) {
+      return Text('No Excel data available');
+    }
+
+    final dataGridSource = ExcelDataGridSource(result.excelData!);
+
+    return Container(
+      height: 200,
+      child: SfDataGrid(
+        source: dataGridSource,
+        columnWidthMode: ColumnWidthMode.auto,
+        columns: result.excelData![0].map((header) {
+          return GridColumn(
+            columnName: header.toString(),
+            label: Container(
+              alignment: Alignment.center,
+              child: Text(header.toString()),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'type': 'documentAnalysis',
+      'result': {
+        'filename': result.filename,
+        'content': result.content,
+        'metadata': result.metadata,
+        'excel_data': result.excelData,
+      },
     };
   }
 }

@@ -26,7 +26,8 @@ class DocumentAnalysisResult(BaseModel):
 
 class ChatMessage(BaseModel):
     message: str
-    conversation_id: str = None
+    conversation_id: str
+    client_id: str
 
     class Config:
         arbitrary_types_allowed = True
@@ -59,6 +60,9 @@ class Income(BaseModel):
     amount: float
     source: str
     date: str = datetime.now().strftime("%Y-%m-%d")
+class FinancialData(BaseModel):
+    expenses: List[Expense]
+    incomes: List[Income]
 
 class CalendarEvent(BaseModel):
     name: str
@@ -82,3 +86,7 @@ class SourceCodeAnalysisResponse(BaseModel):
     complexity: str
     suggestions: List[str]
     code: str
+
+class LoginCredentials(BaseModel):
+    username: str
+    password: str

@@ -11,6 +11,30 @@ import pandas as pd
 import io
 import numpy as np
 import math
+import io
+import PyPDF2
+from datetime import datetime
+
+
+def parse_pdf_date(date_string):
+    if not date_string:
+        return None
+
+    date_formats = [
+        'D:%Y%m%d%H%M%S%z',  # Standard PDF date format
+        '%Y-%m-%d %H:%M:%S',  # ISO format
+        '%m/%d/%Y %H:%M:%S',  # US format
+        '%d/%m/%Y %H:%M:%S',  # UK format
+    ]
+
+    for date_format in date_formats:
+        try:
+            return datetime.strptime(date_string.replace("'", ""), date_format)
+        except ValueError:
+            continue
+
+    # If no format matches, return the original string
+    return date_string
 
 
 def analyze_pdf(file_content: bytes) -> tuple[str, dict]:
@@ -19,16 +43,35 @@ def analyze_pdf(file_content: bytes) -> tuple[str, dict]:
     for page in pdf_reader.pages:
         content += page.extract_text() + "\n"
 
-    metadata = {
+    metadata = pdf_reader.metadata if pdf_reader.metadata else {}
+
+    parsed_metadata = {
         "num_rows": 0,
         "num_columns": 0,
         "column_names": [],
         "num_pages": len(pdf_reader.pages),
-        "author": pdf_reader.metadata.author if pdf_reader.metadata else None,
-        "creator": pdf_reader.metadata.creator if pdf_reader.metadata else None,
+        "author": metadata.get('/Author'),
+        "creator": metadata.get('/Creator'),
+        "producer": metadata.get('/Producer'),
+        "subject": metadata.get('/Subject'),
+        "title": metadata.get('/Title'),
+        "creation_date": None,
+        "modification_date": None,
     }
-    return content, metadata
 
+    creation_date = parse_pdf_date(metadata.get('/CreationDate'))
+    if isinstance(creation_date, datetime):
+        parsed_metadata["creation_date"] = creation_date.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        parsed_metadata["creation_date"] = creation_date
+
+    modification_date = parse_pdf_date(metadata.get('/ModDate'))
+    if isinstance(modification_date, datetime):
+        parsed_metadata["modification_date"] = modification_date.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        parsed_metadata["modification_date"] = modification_date
+
+    return content, parsed_metadata
 
 def analyze_word(file_content: bytes) -> tuple[str, dict]:
     doc = Document(io.BytesIO(file_content))

@@ -14,7 +14,7 @@ def setup_ollama():
     load_dotenv()
     logger.info("Pulling model...")
     try:
-        pull('llama3.1:70b')
+        # pull('llama3.1')
         logger.info("Model pull completed successfully")
     except Exception as e:
         logger.error(f"Error pulling model: {str(e)}")

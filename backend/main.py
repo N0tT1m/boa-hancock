@@ -2,12 +2,12 @@ import ast
 import logging
 import sqlite3
 import uuid
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest
+from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
-from chat_service import process_chat_request
+from chat_service import process_chat_request, get_conversation_history, store_message
 from search_service import perform_web_search, perform_image_search, is_search_request
 from document_analysis_service import analyze_pdf, analyze_word, analyze_spreadsheet
 from expense_service import is_expense_request, handle_expense_request
@@ -15,9 +15,18 @@ from expense_service import ExpenseTracker
 from typing import List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from state import global_state
+from capital_one import login_navigate_and_download_capital_one
+import json, base64
 from pydantic import BaseModel
 from datetime import datetime, time
 from calendar_service import add_calendar_event
+import asyncio
+import uvicorn
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+import socket
+import sys
 import traceback
 
 expenses: List[Dict[str, Any]] = []
@@ -54,8 +63,8 @@ c.execute('''CREATE TABLE IF NOT EXISTS conversations
 conn.commit()
 
 # SQLite setup
-conn2 = sqlite3.connect('expense_tracker.db')
-c2 = conn.cursor()
+conn2 = sqlite3.connect('financial_data.db')
+c2 = conn2.cursor()
 c2.execute('''CREATE TABLE IF NOT EXISTS expenses
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               amount REAL,
@@ -84,24 +93,138 @@ def get_last_conversation(limit=5):
     """, (limit,))
     return c.fetchall()[::-1]  # Reverse the order to get oldest to newest
 
-@app.post("/api/chat", response_model=ChatResponse)
+# Increase the system's socket buffer size
+# This might require administrative privileges
+def increase_socket_buffer_size():
+    try:
+        socket.SOMAXCONN = 1024  # Increase maximum connections
+        socket.setdefaulttimeout(60)  # Set a default timeout
+    except Exception as e:
+        logger.warning(f"Failed to increase socket buffer size: {e}")
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, client_id: str):
+        await websocket.accept()
+        self.active_connections[client_id] = websocket
+        logger.info(f"New client connected: {client_id}")
+
+    def disconnect(self, client_id: str):
+        self.active_connections.pop(client_id, None)
+        logger.info(f"Client disconnected: {client_id}")
+
+    async def send_message(self, message: str, client_id: str):
+        if client_id in self.active_connections:
+            await self.active_connections[client_id].send_text(message)
+
+manager = ConnectionManager()
+
+async def process_chat_request(user_input: str, conversation_history: List[Dict[str, str]], ollama_client, client_id: str):
+    # Format the conversation history
+    formatted_conversation = [
+        {"role": "system", "content": "You are a helpful AI assistant."}
+    ]
+
+    # Add conversation history if it exists
+    if conversation_history:
+        for message in conversation_history:
+            formatted_conversation.append({
+                "role": "user" if message.get("isUser", False) else "assistant",
+                "content": message.get("text", "")
+            })
+
+    # Add the new user input
+    formatted_conversation.append({"role": "user", "content": user_input})
+
+    try:
+        logger.debug(f"Sending conversation to Ollama: {formatted_conversation}")
+
+        # Generate response using Ollama (synchronous call)
+        response = ollama_client.chat(model="llama3.1", messages=formatted_conversation)
+
+        assistant_message = response['message']['content']
+
+        logger.debug(f"Received response from Ollama: {assistant_message}")
+
+        result = {
+            "type": "chat",
+            "message": assistant_message,
+            "metadata": {
+                "tokens_evaluated": response.get('eval_count', 0),
+                "duration": response.get('eval_duration', 0)
+            }
+        }
+
+        # Send the response to the client via WebSocket
+        await manager.send_message(json.dumps(result), client_id)
+
+        return result
+    except Exception as e:
+        logger.error(f"Error in chat processing: {str(e)}", exc_info=True)
+        error_message = {
+            "type": "error",
+            "message": "I'm sorry, but I encountered an error while processing your request. Could you please try again?",
+            "metadata": {
+                "error": str(e)
+            }
+        }
+        await manager.send_message(json.dumps(error_message), client_id)
+        return error_message
+
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # ... (your existing WebSocket logic)
+    except Exception as e:
+        logger.error(f"WebSocket error for client {client_id}: {str(e)}")
+    finally:
+        manager.disconnect(client_id)
+
+async def process_message(data: str, client_id: str):
+    try:
+        message = json.loads(data)
+        message_type = message.get('type')
+
+        if message_type == 'chat':
+            logger.debug(f"Processing chat message for client {client_id}: {message['message']}")
+            response = process_chat_request(
+                message['message'],
+                message.get('conversation_history', []),
+                ollama_client
+            )
+            logger.debug(f"Sending response to client {client_id}: {response}")
+            await manager.send_message(json.dumps(response), client_id)
+        else:
+            logger.warning(f"Unknown message type received from client {client_id}: {message_type}")
+            await manager.send_message(json.dumps({"error": "Unknown message type"}), client_id)
+    except Exception as e:
+        logger.error(f"Error processing message for client {client_id}: {str(e)}", exc_info=True)
+        await manager.send_message(json.dumps({"error": str(e)}), client_id)
+
+
+@app.post("/api/chat")
 async def chat_endpoint(chat_message: ChatMessage):
     user_input = chat_message.message
     conversation_id = chat_message.conversation_id
-    logger.info(f"Received chat message: {user_input} for conversation: {conversation_id}")
+    client_id = chat_message.client_id
 
-    if not conversation_id:
-        # This is a new conversation, get context from the last conversation
-        last_conversation = get_last_conversation()
-        conversation_id = str(uuid.uuid4())
-        logger.info(f"Starting new conversation with ID: {conversation_id}")
+    logger.info(f"Received chat message: {user_input} for conversation: {conversation_id}, client: {client_id}")
 
-        # Add a system message to provide context from the last conversation
-        if last_conversation:
-            system_message = "Here's a summary of our last conversation: "
-            system_message += " ".join([f"{role}: {content}" for role, content in last_conversation])
-            c.execute("INSERT INTO conversations (conversation_id, role, content) VALUES (?, ?, ?)",
-                      (conversation_id, 'system', system_message))
+    # Retrieve conversation history (you may need to implement this)
+    conversation_history = get_conversation_history(conversation_id)
+
+    response = await process_chat_request(user_input, conversation_history, ollama_client, client_id)
+
+    # Store the response in the conversation history (you may need to implement this)
+    store_message(conversation_id, 'assistant', response['message'])
+
+    return response
 
     # Store user message in database
     c.execute("INSERT INTO conversations (conversation_id, role, content) VALUES (?, ?, ?)",
@@ -250,27 +373,82 @@ async def analyze_document(file: UploadFile = File(...)):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error analyzing document: {str(e)}")
 
-@app.post("/api/expense", response_model=dict)
+@app.post("/api/financial-analysis")
+async def financial_analysis(data: FinancialData):
+    try:
+        # Calculate total expenses and income
+        total_expenses = sum(expense.amount for expense in data.expenses)
+        total_income = sum(income.amount for income in data.incomes)
+        net_income = total_income - total_expenses
+
+        # Prepare data for AI analysis
+        expense_categories = {}
+        for expense in data.expenses:
+            if expense.category in expense_categories:
+                expense_categories[expense.category] += expense.amount
+            else:
+                expense_categories[expense.category] = expense.amount
+
+        # Prepare prompt for AI
+        prompt = f"""Analyze the following financial data and provide insights:
+
+Total Income: ${total_income:.2f}
+Total Expenses: ${total_expenses:.2f}
+Net Income: ${net_income:.2f}
+
+Expense Breakdown:
+{json.dumps(expense_categories, indent=2)}
+
+Please provide:
+1. An overall assessment of the financial situation.
+2. Insights into spending patterns.
+3. At least 3 specific recommendations for saving money.
+4. Any potential areas of concern or opportunities for improvement.
+
+Format your response in markdown for easy reading."""
+
+        # Get AI analysis
+        response = ollama_client.chat(model="llama3.1", messages=[
+            {"role": "system", "content": "You are a helpful financial advisor."},
+            {"role": "user", "content": prompt}
+        ])
+
+        ai_analysis = response['message']['content']
+
+        # Prepare the response
+        analysis_result = {
+            "expenses": [expense.dict() for expense in data.expenses],
+            "incomes": [income.dict() for income in data.incomes],
+            "analysis": ai_analysis
+        }
+
+        return analysis_result
+
+    except Exception as e:
+        logger.error(f"Error in financial analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error performing financial analysis: {str(e)}")
+
+@app.post("/api/expense")
 async def add_expense(expense: Expense):
     try:
         c2.execute("INSERT INTO expenses (amount, category, description, date) VALUES (?, ?, ?, ?)",
                   (expense.amount, expense.category, expense.description, expense.date))
-        conn2.commit()
+        conn.commit()
         return {"message": "Expense added successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding expense: {str(e)}")
 
-@app.post("/api/income", response_model=dict)
+@app.post("/api/income")
 async def add_income(income: Income):
     try:
         c2.execute("INSERT INTO income (amount, source, date) VALUES (?, ?, ?)",
                   (income.amount, income.source, income.date))
-        conn2.commit()
+        conn.commit()
         return {"message": "Income added successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding income: {str(e)}")
 
-@app.get("/api/expenses", response_model=list)
+@app.get("/api/expenses")
 async def get_expenses():
     try:
         c2.execute("SELECT * FROM expenses")
@@ -280,7 +458,7 @@ async def get_expenses():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving expenses: {str(e)}")
 
-@app.get("/api/income", response_model=list)
+@app.get("/api/income")
 async def get_income():
     try:
         c2.execute("SELECT * FROM income")
@@ -370,8 +548,34 @@ async def analyze_source_code_endpoint(request: SourceCodeAnalysisRequest):
 async def add_calendar_event(event: CalendarEvent):
     return handle_calendar_request(event)
 
-if __name__ == "__main__":
-    import uvicorn
+# In your FastAPI app file (main.py), update the endpoint:
+@app.post("/api/login-capital-one")
+async def capital_one_navigation(credentials: LoginCredentials):
+    result = await login_navigate_and_download_capital_one(credentials.username, credentials.password)
+    if result["success"]:
+        return {
+            "message": result["message"],
+            "balance": result.get("balance"),
+            "file_path": result.get("file_path")
+        }
+    else:
+        raise HTTPException(status_code=401, detail=result["message"])
 
-    logger.info("Starting Uvicorn server")
-    uvicorn.run(app, host="192.168.1.87", port=8000)
+
+if __name__ == "__main__":
+    increase_socket_buffer_size()
+
+    config = uvicorn.Config(
+        app,
+        host="192.168.1.90",
+        port=8000,
+        loop="asyncio",
+        limit_concurrency=100,  # Limit concurrent connections
+        limit_max_requests=10000,  # Limit max requests per worker
+        timeout_keep_alive=5,  # Reduce keep-alive timeout
+    )
+    server = uvicorn.Server(config)
+
+    # Run the server with proper asyncio handling
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(server.serve())
