@@ -329,39 +329,39 @@ class _ChatScreenState extends State<ChatScreen> {
   late WebSocketManager _wsManager;
 
   String get apiUrl {
-    return 'http://192.168.1.90:8000/api/chat';
+    return 'http://192.168.1.78:8000/api/chat';
   }
 
   String get searchApiUrl {
-    return 'http://192.168.1.90:8000/api/search';
+    return 'http://192.168.1.78:8000/api/search';
   }
 
   String get documentAnalysisUrl {
-    return 'http://192.168.1.90:8000/api/analyze-document';
+    return 'http://192.168.1.78:8000/api/analyze-document';
   }
 
   String get expenseApiUrl {
-    return 'http://192.168.1.90:8000/api/expense';
+    return 'http://192.168.1.78:8000/api/expense';
   }
 
   String get incomeApiUrl {
-    return 'http://192.168.1.90:8000/api/income';
+    return 'http://192.168.1.78:8000/api/income';
   }
 
   String get expensesApiUrl {
-    return 'http://192.168.1.90:8000/api/expenses';
+    return 'http://192.168.1.78:8000/api/expenses';
   }
 
   String get calendarApiUrl {
-    return 'http://192.168.1.90:8000/api/calendar';
+    return 'http://192.168.1.78:8000/api/calendar';
   }
 
   String get financialApiUrl {
-    return 'http://192.168.1.90:8000/api/financial-analysis';
+    return 'http://192.168.1.78:8000/api/financial-analysis';
   }
 
   String get capitalOneLoginApiUrl {
-    return 'http://192.168.1.90:8000/api/login-capital-one';
+    return 'http://192.168.1.78:8000/api/login-capital-one';
   }
 
   // Remove WebSocket-related code
