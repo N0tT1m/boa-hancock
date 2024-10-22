@@ -17,7 +17,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform, Process;
@@ -2372,7 +2371,7 @@ class MovieBrowser extends StatefulWidget {
 
 class _MovieBrowserState extends State<MovieBrowser> {
   String get baseUrl {
-    return 'http://192.168.1.78:8000';
+    return 'http://192.168.1.78:8001';
   }
 
   List<FileItem> _items = [];
@@ -2492,13 +2491,19 @@ class MoviePlayer extends StatefulWidget {
 
 class _MoviePlayerState extends State<MoviePlayer> {
   String get baseUrl {
-    return 'http://192.168.1.78:8000';
+    return 'http://192.168.1.78:8001';
   }
 
-  VideoPlayerController? _videoPlayerController;
-  ChewieController? _chewieController;
+  VideoPlayerController? _controller;
   bool _isLoading = true;
   String? _errorMessage;
+  bool _isPlaying = false;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+
+  // Add these class variables
+  bool _isShowingControls = true;
+  Timer? _hideControlsTimer;
 
   @override
   void initState() {
@@ -2508,9 +2513,11 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
   String _constructMovieUrl() {
     final shareName = Uri.encodeComponent(widget.movie.share_name);
-    final moviePath = Uri.encodeComponent(widget.movie.path.replaceAll('\\', '/').trim());
-    final url = '${baseUrl}/api/movies/stream/$shareName/$moviePath';
-    debugPrint('Constructed URL: $url');
+    final moviePath = widget.movie.path
+        .replaceFirst('\\', '');
+
+    final url = '$baseUrl/api/movies/stream/$shareName/$moviePath';
+    debugPrint('Movie URL: $url');
     return url;
   }
 
@@ -2522,59 +2529,286 @@ class _MoviePlayerState extends State<MoviePlayer> {
 
     try {
       final movieUrl = _constructMovieUrl();
+      debugPrint('Initializing player with URL: $movieUrl');
 
-      if (kIsWeb) {
-        _videoPlayerController = VideoPlayerController.network(
-          movieUrl,
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
-      } else {
-        _videoPlayerController = VideoPlayerController.networkUrl(
-          Uri.parse(movieUrl),
-          httpHeaders: {
-            'Accept-Ranges': 'bytes',
-          },
-          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-        );
+      // Check if running on Windows
+      if (Platform.isWindows) {
+        // For Windows, directly open in default player
+        _openInDefaultPlayer();
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = "Opening in default player...";
+          });
+        }
+        return;
       }
 
-      // Wait for the controller to initialize
-      await _videoPlayerController!.initialize();
-
-      // Calculate aspect ratio with a fallback
-      double aspectRatio = _videoPlayerController!.value.aspectRatio;
-      if (aspectRatio.isNaN || aspectRatio <= 0) {
-        aspectRatio = 16 / 9;
-      }
-
-      _chewieController = ChewieController(
-        videoPlayerController: _videoPlayerController!,
-        autoPlay: false,
-        looping: false,
-        aspectRatio: aspectRatio,
-        allowFullScreen: true,
-        allowMuting: true,
-        showControls: true,
-        placeholder: Center(
-          child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-          ),
-        ),
-        errorBuilder: (context, errorMessage) {
-          return _buildErrorWidget(errorMessage);
+      // For other platforms, use video_player
+      _controller = VideoPlayerController.network(
+        movieUrl,
+        httpHeaders: {
+          'Accept-Ranges': 'bytes',
         },
       );
 
-      setState(() {
-        _isLoading = false;
+      // Add listeners
+      _controller!.addListener(() {
+        if (!mounted) return;
+        setState(() {
+          _isPlaying = _controller!.value.isPlaying;
+          _position = _controller!.value.position;
+          _duration = _controller!.value.duration;
+        });
       });
-    } catch (e) {
+
+      // Initialize the controller
+      await _controller!.initialize();
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+
+    } catch (e, stackTrace) {
       debugPrint('Error initializing video player: $e');
-      setState(() {
-        _isLoading = false;
-        _errorMessage = e.toString();
-      });
+      debugPrint('Stack trace: $stackTrace');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString();
+        });
+      }
     }
+  }
+
+  void _openInDefaultPlayer() async {
+    if (kIsWeb) return;
+
+    final url = _constructMovieUrl();
+    try {
+      if (Platform.isWindows) {
+        await Process.run('cmd', ['/c', 'start', url]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [url]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [url]);
+      }
+
+      // Close the player screen after launching external player
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      debugPrint('Error opening default player: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to open default player: $e';
+        });
+      }
+    }
+  }
+
+  // Update the build method to show a different UI for Windows
+  @override
+  Widget build(BuildContext context) {
+    if (Platform.isWindows) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          title: Text(widget.movie.name),
+          backgroundColor: Colors.transparent,
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Opening video in default player...',
+                style: TextStyle(color: Colors.white),
+              ),
+              SizedBox(height: 20),
+              CircularProgressIndicator(),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return _buildPlayer();  // Your existing player UI
+  }
+
+  // Move your existing player UI to this method
+  Widget _buildPlayer() {
+    // Your existing build method content here
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Center(
+          child: _isLoading ? CircularProgressIndicator() :
+          _errorMessage != null ? _buildErrorWidget(_errorMessage!) :
+          _buildPlayer(),
+        ),
+      ),
+    );
+  }
+
+  void _togglePlay() {
+    if (_controller == null) return;
+
+    setState(() {
+      if (_controller!.value.isPlaying) {
+        _controller!.pause();
+      } else {
+        _controller!.play();
+        _resetHideControlsTimer();
+      }
+    });
+  }
+
+  void _resetHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    setState(() => _isShowingControls = true);
+    _hideControlsTimer = Timer(Duration(seconds: 3), () {
+      if (mounted && _isPlaying) {
+        setState(() => _isShowingControls = false);
+      }
+    });
+  }
+
+  void _showControls() {
+    setState(() => _isShowingControls = true);
+    _resetHideControlsTimer();
+  }
+
+  void _videoListener() {
+    if (!mounted) return;
+
+    setState(() {
+      _isPlaying = _controller!.value.isPlaying;
+      _position = _controller!.value.position;
+    });
+  }
+
+  void _seekTo(Duration position) {
+    _controller?.seekTo(position);
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return duration.inHours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
+  Widget _buildControls() {
+    return AnimatedOpacity(
+      opacity: _isShowingControls ? 1.0 : 0.0,
+      duration: Duration(milliseconds: 300),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black54,
+              Colors.transparent,
+              Colors.transparent,
+              Colors.black54,
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Top bar with title
+            AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              title: Text(widget.movie.name),
+              actions: [
+                IconButton(
+                  icon: Icon(Icons.refresh),
+                  onPressed: _retryInitialization,
+                  tooltip: 'Reload video',
+                ),
+                if (!kIsWeb)
+                  IconButton(
+                    icon: Icon(Icons.open_in_new),
+                    onPressed: _openInDefaultPlayer,
+                    tooltip: 'Open in default player',
+                  ),
+              ],
+            ),
+            // Bottom controls
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Progress bar
+                Container(
+                  height: 40,
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Text(
+                        _formatDuration(_position),
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _position.inMilliseconds.toDouble(),
+                          min: 0,
+                          max: _duration.inMilliseconds.toDouble(),
+                          onChanged: (value) {
+                            _seekTo(Duration(milliseconds: value.toInt()));
+                          },
+                        ),
+                      ),
+                      Text(
+                        _formatDuration(_duration),
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+                // Play/Pause button
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        size: 40,
+                        color: Colors.white,
+                      ),
+                      onPressed: _togglePlay,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _controller?.value.volume == 0 ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          if (_controller?.value.volume == 0) {
+                            _controller?.setVolume(1.0);
+                          } else {
+                            _controller?.setVolume(0.0);
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                SizedBox(height: 16),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildErrorWidget(String errorMessage) {
@@ -2623,106 +2857,21 @@ class _MoviePlayerState extends State<MoviePlayer> {
     );
   }
 
-  void _openInDefaultPlayer() async {
-    if (kIsWeb) return;
-
-    final url = _constructMovieUrl();
-    try {
-      final uri = Uri.parse(url);
-      if (Platform.isWindows) {
-        await Process.run('cmd', ['/c', 'start', uri.toString()]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', [uri.toString()]);
-      } else if (Platform.isLinux) {
-        await Process.run('xdg-open', [uri.toString()]);
-      }
-    } catch (e) {
-      debugPrint('Error opening default player: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open default player')),
-        );
-      }
-    }
-  }
-
   Future<void> _retryInitialization() async {
-    await _disposeControllers();
+    await _disposeController();
     await _initializePlayer();
   }
 
-  Future<void> _disposeControllers() async {
-    _chewieController?.dispose();
-    await _videoPlayerController?.dispose();
-    _videoPlayerController = null;
-    _chewieController = null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: Text(widget.movie.name),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _retryInitialization,
-            tooltip: 'Reload video',
-          ),
-          if (!kIsWeb)
-            IconButton(
-              icon: Icon(Icons.open_in_new),
-              onPressed: _openInDefaultPlayer,
-              tooltip: 'Open in default player',
-            ),
-        ],
-      ),
-      body: SafeArea(
-        child: Center(
-          child: _buildPlayer(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlayer() {
-    if (_isLoading) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-          ),
-          SizedBox(height: 16),
-          Text(
-            'Loading video...',
-            style: TextStyle(color: Colors.white),
-          ),
-        ],
-      );
-    }
-
-    if (_errorMessage != null) {
-      return _buildErrorWidget(_errorMessage!);
-    }
-
-    if (_chewieController != null) {
-      return Chewie(controller: _chewieController!);
-    }
-
-    return Center(
-      child: Text(
-        'Unable to load video player',
-        style: TextStyle(color: Colors.white),
-      ),
-    );
+  Future<void> _disposeController() async {
+    _hideControlsTimer?.cancel();
+    _controller?.removeListener(_videoListener);
+    await _controller?.dispose();
+    _controller = null;
   }
 
   @override
   void dispose() {
-    _disposeControllers();
+    _disposeController();
     super.dispose();
   }
 }
