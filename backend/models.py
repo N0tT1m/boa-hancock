@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
+from smb_config import SMB_CONFIG
+
 
 class ChatResponse(BaseModel):
     message: str
@@ -90,3 +92,56 @@ class SourceCodeAnalysisResponse(BaseModel):
 class LoginCredentials(BaseModel):
     username: str
     password: str
+
+# Previous classes remain the same
+class ShareConfig(BaseModel):
+    name: str
+    path: str
+    display_name: str
+
+class SmbConfig(BaseModel):
+    username: str
+    password: str
+    server_name: str
+    server_ip: str
+    shares: List[ShareConfig]
+    client_name: str
+    domain: str
+
+    @classmethod
+    def from_config(cls):
+        return cls(
+            username=SMB_CONFIG["username"],
+            password=SMB_CONFIG["password"],
+            server_name=SMB_CONFIG["server_name"],
+            server_ip=SMB_CONFIG["server_ip"],
+            shares=[ShareConfig(**share) for share in SMB_CONFIG["shares"]],
+            client_name=SMB_CONFIG["client_name"],
+            domain=SMB_CONFIG["domain"]
+        )
+
+    @classmethod
+    def get_instance(cls):
+        """Get a singleton instance of SmbConfig"""
+        if not hasattr(cls, '_instance'):
+            cls._instance = cls.from_config()
+        return cls._instance
+
+class FileItem(BaseModel):
+    name: str
+    path: str
+    is_directory: bool
+    size: int
+    modified_time: str
+    share_name: str
+    display_name: str
+
+class MovieMetadata(BaseModel):
+    title: str
+    path: str
+    size: int
+    modified_time: str
+    duration: Optional[float] = None
+    thumbnail: Optional[str] = None
+    share_name: str
+    display_name: str

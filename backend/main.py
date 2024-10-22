@@ -2,9 +2,10 @@ import ast
 import logging
 import sqlite3
 import uuid
+import aiosqlite
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
+from models import ChatMessage, ChatResponse, SearchResponse, MovieMetadata, FileItem, SmbConfig, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request, get_conversation_history, store_message
@@ -12,7 +13,7 @@ from search_service import perform_web_search, perform_image_search, is_search_r
 from document_analysis_service import analyze_pdf, analyze_word, analyze_spreadsheet
 from expense_service import is_expense_request, handle_expense_request
 from expense_service import ExpenseTracker
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
 from state import global_state
 from capital_one import login_navigate_and_download_capital_one
@@ -21,6 +22,8 @@ from pydantic import BaseModel
 from datetime import datetime, time
 from calendar_service import add_calendar_event
 import asyncio
+from pathlib import Path
+import tempfile
 import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +31,8 @@ import logging
 import socket
 import sys
 import traceback
+from smb_config import SMB_CONFIG
+from movie import stream_movie, list_directory, get_smb_connection, get_movie_metadata
 
 expenses: List[Dict[str, Any]] = []
 income: List[Dict[str, Any]] = []
@@ -102,6 +107,171 @@ def increase_socket_buffer_size():
     except Exception as e:
         logger.warning(f"Failed to increase socket buffer size: {e}")
 
+
+class DatabaseManager:
+    def __init__(self, db_path: str = 'chat_history.db'):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize the database with required tables."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                role TEXT,
+                content TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    async def get_conversation_history(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Retrieve conversation history from the database."""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute("""
+                    SELECT role, content 
+                    FROM conversations 
+                    WHERE conversation_id = ?
+                    ORDER BY timestamp
+                """, (conversation_id,)) as cursor:
+                    rows = await cursor.fetchall()
+
+                    return [
+                        {
+                            "isUser": row[0] == "user",
+                            "text": row[1]
+                        }
+                        for row in rows
+                    ]
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history: {e}")
+            return []
+
+    async def store_message(self, conversation_id: str, role: str, content: str) -> None:
+        """Store a message in the database."""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("""
+                    INSERT INTO conversations (conversation_id, role, content)
+                    VALUES (?, ?, ?)
+                """, (conversation_id, role, content))
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Error storing message: {e}")
+
+
+class ChatProcessor:
+    def __init__(self, ollama_client, db_manager: DatabaseManager):
+        self.ollama_client = ollama_client
+        self.db_manager = db_manager
+        self.system_prompt = {"role": "system", "content": "You are a helpful AI assistant."}
+
+    def format_conversation_history(self, history: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Format the conversation history into Ollama's expected format."""
+        formatted = [self.system_prompt]
+
+        for message in history:
+            formatted.append({
+                "role": "user" if message.get("isUser", False) else "assistant",
+                "content": message.get("text", "")
+            })
+
+        return formatted
+
+    async def process_chat_request(
+            self,
+            user_input: str,
+            conversation_history: List[Dict[str, Any]],
+            client_id: str
+    ) -> Dict[str, Any]:
+        """Process a chat request and return a response."""
+        try:
+            formatted_conversation = self.format_conversation_history(conversation_history)
+            formatted_conversation.append({
+                "role": "user",
+                "content": user_input
+            })
+
+            logger.debug(f"Sending conversation to Ollama for client {client_id}: {formatted_conversation}")
+
+            response = self.ollama_client.chat(
+                model="llama3.1",
+                messages=formatted_conversation
+            )
+
+            assistant_message = response['message']['content']
+
+            logger.debug(f"Received response from Ollama for client {client_id}: {assistant_message}")
+
+            return {
+                "type": "chat",
+                "message": assistant_message,
+                "metadata": {
+                    "tokens_evaluated": response.get('eval_count', 0),
+                    "duration": response.get('eval_duration', 0),
+                    "client_id": client_id
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error in chat processing for client {client_id}: {str(e)}", exc_info=True)
+            return {
+                "type": "error",
+                "message": "I'm sorry, but I encountered an error while processing your request. Please try again.",
+                "metadata": {
+                    "error": str(e),
+                    "client_id": client_id
+                }
+            }
+
+class ConversationManager:
+    """Handle conversation storage and retrieval."""
+
+    def __init__(self, database_connection):
+        self.db = database_connection
+
+    async def get_conversation_history(conversation_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve conversation history from the database.
+        Returns a list of message dictionaries.
+        """
+        try:
+            cursor = c.execute("""
+                SELECT role, content 
+                FROM conversations 
+                WHERE conversation_id = ?
+                ORDER BY timestamp
+            """, (conversation_id,))
+
+            messages = []
+            for row in cursor.fetchall():
+                role, content = row
+                messages.append({
+                    "isUser": role == "user",
+                    "text": content
+                })
+
+            return messages
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history: {e}")
+            return []
+
+    async def store_message(conversation_id: str, role: str, content: str) -> None:
+        """Store a message in the database."""
+        try:
+            c.execute("""
+                INSERT INTO conversations (conversation_id, role, content)
+                VALUES (?, ?, ?)
+            """, (conversation_id, role, content))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing message: {e}")
+
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -120,7 +290,13 @@ class ConnectionManager:
         if client_id in self.active_connections:
             await self.active_connections[client_id].send_text(message)
 
+# Initialize database and chat processor
+db_manager = DatabaseManager()
 manager = ConnectionManager()
+chat_processor = ChatProcessor(ollama_client, db_manager)
+conversation_manager = ConversationManager(c)
+
+
 
 async def process_chat_request(user_input: str, conversation_history: List[Dict[str, str]], ollama_client, client_id: str):
     # Format the conversation history
@@ -193,7 +369,7 @@ async def process_message(data: str, client_id: str):
 
         if message_type == 'chat':
             logger.debug(f"Processing chat message for client {client_id}: {message['message']}")
-            response = process_chat_request(
+            response = chat_processor.process_chat_request(
                 message['message'],
                 message.get('conversation_history', []),
                 ollama_client
@@ -216,44 +392,30 @@ async def chat_endpoint(chat_message: ChatMessage):
 
     logger.info(f"Received chat message: {user_input} for conversation: {conversation_id}, client: {client_id}")
 
-    # Retrieve conversation history (you may need to implement this)
-    conversation_history = get_conversation_history(conversation_id)
+    # Get conversation history using the database manager
+    conversation_history = await db_manager.get_conversation_history(conversation_id)
 
-    response = await process_chat_request(user_input, conversation_history, ollama_client, client_id)
-
-    # Store the response in the conversation history (you may need to implement this)
-    store_message(conversation_id, 'assistant', response['message'])
-
-    return response
-
-    # Store user message in database
-    c.execute("INSERT INTO conversations (conversation_id, role, content) VALUES (?, ?, ?)",
-              (conversation_id, 'user', user_input))
-    conn.commit()
-
-    # Retrieve conversation history
-    c.execute("SELECT role, content FROM conversations WHERE conversation_id = ? ORDER BY timestamp",
-              (conversation_id,))
-    conversation_history = c.fetchall()
+    # Store user message
+    await db_manager.store_message(conversation_id, 'user', user_input)
 
     if is_calendar_request(user_input):
         response = handle_calendar_request(user_input)
-    elif is_expense_request(user_input):
-        response = handle_expense_request(user_input)
     else:
-        response = await process_chat_request(user_input, conversation_history, ollama_client)
+        response = await chat_processor.process_chat_request(
+            user_input,
+            conversation_history,
+            client_id
+        )
 
-    # Store assistant response in database
-    c.execute("INSERT INTO conversations (conversation_id, role, content) VALUES (?, ?, ?)",
-              (conversation_id, 'assistant', response.message))
-    conn.commit()
+    # Store assistant response
+    await db_manager.store_message(conversation_id, 'assistant', response['message'])
 
     return ChatResponse(
-        message=response.message,
+        message=response['message'],
         metadata={
             "conversation_id": conversation_id,
-            "duration": response.metadata.get("duration"),
-            "tokens_evaluated": response.metadata.get("tokens_evaluated"),
+            "duration": response['metadata'].get("duration"),
+            "tokens_evaluated": response['metadata'].get("tokens_evaluated"),
             "event_creation_stage": global_state.event_creation_stage if is_calendar_request(user_input) else None
         }
     )
@@ -500,7 +662,7 @@ Security Concerns: [list any security concerns or "None identified" if none]
         ]
 
         # Send the prompt to the LLM
-        response = await process_chat_request(prompt, conversation_history, ollama_client)
+        response = await chat_processor.process_chat_request(prompt, conversation_history, ollama_client)
 
         # Parse the LLM's response
         lines = response.message.split('\n')
@@ -540,7 +702,6 @@ async def analyze_source_code_endpoint(request: SourceCodeAnalysisRequest):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error analyzing source code: {str(e)}")
 
-
 # Update the existing analyze_document endpoint to handle text files
 
 # In your main FastAPI app file (main.py), update the endpoint:
@@ -561,6 +722,23 @@ async def capital_one_navigation(credentials: LoginCredentials):
     else:
         raise HTTPException(status_code=401, detail=result["message"])
 
+
+@app.get("/api/movies/list", response_model=List[FileItem])
+async def list_movies(path: str = "/"):
+    """List available movies and directories"""
+    return await list_directory(path)  # list_directory now uses get_instance() internally
+
+
+@app.get("/api/movies/stream/{share_name}/{path:path}")
+async def stream_movie_endpoint(share_name: str, path: str):
+    """Stream a movie file"""
+    return await stream_movie(share_name, path)  # stream_movie now uses get_instance() internally
+
+
+@app.get("/api/movies/metadata/{share_name}/{path:path}", response_model=MovieMetadata)
+async def get_movie_metadata_endpoint(share_name: str, path: str):
+    """Get metadata for a movie file"""
+    return await get_movie_metadata(share_name, path)  # get_movie_metadata now uses get_instan
 
 if __name__ == "__main__":
     increase_socket_buffer_size()
