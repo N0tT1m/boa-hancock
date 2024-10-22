@@ -4,6 +4,7 @@ import sqlite3
 import os
 import uuid
 import aiosqlite
+import fastapi.responses
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from models import ChatMessage, ChatResponse, SearchResponse, MovieMetadata, StreamingResponse, FileItem, SmbConfig, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
@@ -730,7 +731,6 @@ async def list_movies(path: str = "/"):
     return await list_directory(path)  # list_directory now uses get_instance() internally
 
 
-# Example usage in your movie streaming endpoint:
 @app.get("/api/movies/stream/{share_name}/{path:path}")
 async def stream_movie_endpoint(share_name: str, path: str):
     """Stream a movie file"""
@@ -751,40 +751,53 @@ async def stream_movie_endpoint(share_name: str, path: str):
         file_obj = conn.getAttributes(share_name, full_path)
         file_size = file_obj.file_size
 
-        # Create a generator to stream the file
-        async def generate():
-            offset = 0
-            chunk_size = 8192  # 8KB chunks
-            try:
-                temp_file = tempfile.NamedTemporaryFile(delete=False)
-                while offset < file_size:
-                    chunk = conn.retrieveFileFromOffset(
-                        share_name,
-                        full_path,
-                        temp_file,
-                        offset,
-                        chunk_size
-                    )
-                    if not chunk:
-                        break
-                    yield chunk
-                    offset += chunk_size
-            finally:
-                temp_file.close()
-                os.unlink(temp_file.name)
-                conn.close()
+        # Create a temp file and stream from it
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
 
-        return StreamingResponse(
-            generate(),
+        # Download file in chunks to temp file
+        chunk_size = 8192
+        offset = 0
+        while offset < file_size:
+            chunk = conn.retrieveFileFromOffset(
+                share_name,
+                full_path,
+                temp_file,
+                offset,
+                chunk_size
+            )
+            if not chunk:
+                break
+            offset += chunk_size
+
+        temp_file.close()
+        conn.close()
+
+        # Create async generator to stream from temp file
+        async def file_stream():
+            try:
+                with open(temp_file.name, 'rb') as f:
+                    while chunk := f.read(chunk_size):
+                        yield chunk
+            finally:
+                os.unlink(temp_file.name)  # Clean up temp file
+
+        return fastapi.responses.StreamingResponse(
+            file_stream(),
             media_type='video/mp4',
             headers={
                 'Content-Disposition': f'inline; filename="{Path(path).name}"',
                 'Content-Length': str(file_size),
+                'Accept-Ranges': 'bytes'
             }
         )
 
     except Exception as e:
         logger.error(f"Error streaming movie: {e}")
+        if 'temp_file' in locals():
+            try:
+                os.unlink(temp_file.name)  # Clean up temp file on error
+            except:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/movies/metadata/{share_name}/{path:path}", response_model=MovieMetadata)
