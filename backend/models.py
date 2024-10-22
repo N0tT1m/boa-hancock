@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, AsyncGenerator, Callable
+
 from datetime import datetime
+
+from starlette.background import BackgroundTask
+
 from smb_config import SMB_CONFIG
 
 
@@ -145,3 +149,40 @@ class MovieMetadata(BaseModel):
     thumbnail: Optional[str] = None
     share_name: str
     display_name: str
+
+
+class StreamingResponse():
+    def __init__(
+            self,
+            content: Union[AsyncGenerator[bytes, None], Callable[[], AsyncGenerator[bytes, None]]],
+            status_code: int = 200,
+            headers: Optional[Dict[str, str]] = None,
+            media_type: Optional[str] = None,
+            background: Optional[BackgroundTask] = None,
+    ) -> None:
+        """
+        Initialize StreamingResponse with video streaming support.
+
+        Args:
+            content: An async generator that yields bytes
+            status_code: HTTP status code
+            headers: HTTP headers
+            media_type: Content type of the response
+            background: Background task to run after the response
+        """
+        self.headers = headers or {}
+        # Ensure headers for video streaming
+        if media_type == "video/mp4":
+            self.headers.update({
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache",
+                "Content-Type": "video/mp4",
+            })
+
+        super().__init__(
+            content=content,
+            status_code=status_code,
+            headers=self.headers,
+            media_type=media_type,
+            background=background
+        )

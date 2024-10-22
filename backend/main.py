@@ -1,11 +1,12 @@
 import ast
 import logging
 import sqlite3
+import os
 import uuid
 import aiosqlite
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from models import ChatMessage, ChatResponse, SearchResponse, MovieMetadata, FileItem, SmbConfig, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
+from models import ChatMessage, ChatResponse, SearchResponse, MovieMetadata, StreamingResponse, FileItem, SmbConfig, ImageSearchResult, SourceCodeAnalysisRequest, SourceCodeAnalysisResponse, SearchResult, Expense, Income, Metadata, DocumentAnalysisResult, CalendarEvent, CalendarEventRequest, FinancialData, LoginCredentials
 from config import setup_logging, setup_ollama, setup_calendar_api
 from calendar_service import handle_calendar_request, is_calendar_request
 from chat_service import process_chat_request, get_conversation_history, store_message
@@ -729,11 +730,62 @@ async def list_movies(path: str = "/"):
     return await list_directory(path)  # list_directory now uses get_instance() internally
 
 
+# Example usage in your movie streaming endpoint:
 @app.get("/api/movies/stream/{share_name}/{path:path}")
 async def stream_movie_endpoint(share_name: str, path: str):
     """Stream a movie file"""
-    return await stream_movie(share_name, path)  # stream_movie now uses get_instance() internally
+    try:
+        config = SmbConfig.get_instance()
+        conn = get_smb_connection(config)
 
+        # Find the matching share configuration
+        share = next((s for s in config.shares if s.name == share_name), None)
+        if not share:
+            raise HTTPException(status_code=404, detail=f"Share {share_name} not found")
+
+        # Normalize the path
+        clean_path = path.replace('/', '\\')
+        full_path = str(Path(share.path) / clean_path.lstrip('\\/'))
+
+        # Get file info
+        file_obj = conn.getAttributes(share_name, full_path)
+        file_size = file_obj.file_size
+
+        # Create a generator to stream the file
+        async def generate():
+            offset = 0
+            chunk_size = 8192  # 8KB chunks
+            try:
+                temp_file = tempfile.NamedTemporaryFile(delete=False)
+                while offset < file_size:
+                    chunk = conn.retrieveFileFromOffset(
+                        share_name,
+                        full_path,
+                        temp_file,
+                        offset,
+                        chunk_size
+                    )
+                    if not chunk:
+                        break
+                    yield chunk
+                    offset += chunk_size
+            finally:
+                temp_file.close()
+                os.unlink(temp_file.name)
+                conn.close()
+
+        return StreamingResponse(
+            generate(),
+            media_type='video/mp4',
+            headers={
+                'Content-Disposition': f'inline; filename="{Path(path).name}"',
+                'Content-Length': str(file_size),
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error streaming movie: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/movies/metadata/{share_name}/{path:path}", response_model=MovieMetadata)
 async def get_movie_metadata_endpoint(share_name: str, path: str):
@@ -746,7 +798,7 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         app,
         host="192.168.1.78",
-        port=8000,
+        port=8001,
         loop="asyncio",
         limit_concurrency=100,  # Limit concurrent connections
         limit_max_requests=10000,  # Limit max requests per worker
