@@ -186,3 +186,18 @@ class StreamingResponse():
             media_type=media_type,
             background=background
         )
+
+class VideoMetadata(BaseModel):
+    name: str
+    path: str
+    size: int
+    mime_type: str
+    is_directory: bool
+    modified_time: str
+    share_name: str
+    display_name: str
+
+class VideoDirectory(BaseModel):
+    path: str
+    items: List[VideoMetadata]
+    current_share: Optional[str] = None

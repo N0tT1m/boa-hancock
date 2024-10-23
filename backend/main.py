@@ -811,7 +811,7 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         app,
         host="192.168.1.78",
-        port=8001,
+        port=8000,
         loop="asyncio",
         limit_concurrency=100,  # Limit concurrent connections
         limit_max_requests=10000,  # Limit max requests per worker

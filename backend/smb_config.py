@@ -1,7 +1,7 @@
 # Updated configuration to handle multiple shares
 SMB_CONFIG = {
     "username": "timmy",
-    "password": "B@bycakes15!",
+    "password": "cakes!",
     "server_name": "tims_porn_server",
     "server_ip": "192.168.1.66",
     "shares": [
